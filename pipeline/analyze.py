@@ -1,0 +1,411 @@
+#!/usr/bin/env python3
+"""把當日標題分群成議題、計算熱度與異常訊號，輸出 data/daily/<日期>.json。
+
+只用 Python 標準函式庫，不需要斷詞套件：中文以「字元 bigram」做 TF-IDF，
+關鍵詞用高頻 n-gram 找。所有門檻集中在下面的常數，接上真實資料後可以調整。
+"""
+import json
+import math
+import re
+import sys
+from collections import Counter, defaultdict
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+DATA = ROOT / "data"
+TPE = timezone(timedelta(hours=8))
+
+# ---- 可調參數 -------------------------------------------------------------
+ASSIGN_T = 0.20        # 標題與議題中心的 cosine 相似度門檻
+MERGE_T = 0.38         # 兩個議題合併的門檻
+MAX_DF = 0.12          # 出現在超過 12% 標題的 bigram 視為無鑑別力
+TOP_TOPICS = 30        # 輸出前幾大議題
+MAX_HEADLINES = 60     # 每個議題最多保留幾則標題
+SINGLE_SHARE = 0.60    # 單一媒體佔比達此值 → 「單一媒體主推」
+LEAN_MIN = 8           # 有立場標記的報導至少幾則才計算立場落差
+LEAN_GAP = 0.30        # 與當日基準差距達此值才提示
+ANON_RATIO = 0.30      # 含匿名消息用語的標題佔比
+BURST_WINDOW_MIN = 20  # 同步出稿的時間窗（分鐘）
+BURST_MIN_SOURCES = 5
+MATCH_T = 0.30         # 跨日議題比對門檻
+
+ANON = re.compile(r"知情人士|消息人士|人士透露|人士指出|據傳|據了解|據悉|爆料|驚爆|踢爆|網傳|內幕|不具名|匿名|高層透露|私下透露|放話|傳將|傳已|傳遭|盛傳")
+EXCL = re.compile(r"獨家")
+CJK = re.compile(r"[一-鿿]+")
+LATIN = re.compile(r"[A-Za-z][A-Za-z0-9\-]+|\d{2,}")
+STOP = set("快訊 獨家 最新 曝光 回應 表示 今天 今日 明天 網友 懶人包 一次看 直播 影片 更新 不斷更新 記者 報導 指出 強調 喊話 怒批 痛批 發聲".split())
+LEAN_NAME = {"green": "偏綠", "blue": "偏藍"}
+
+
+def runs(title):
+    return CJK.findall(title)
+
+
+def tokens(title):
+    out = []
+    for r in runs(title):
+        out.extend(r[i:i + 2] for i in range(len(r) - 1))
+    out.extend(w.lower() for w in LATIN.findall(title))
+    return out
+
+
+def ngrams(title, lo=2, hi=6):
+    out = set()
+    for r in runs(title):
+        for n in range(lo, hi + 1):
+            for i in range(len(r) - n + 1):
+                out.add(r[i:i + n])
+    out.update(w for w in LATIN.findall(title) if len(w) >= 3)
+    return out
+
+
+def vectorize(items):
+    docs = [Counter(tokens(it["title"])) for it in items]
+    n = len(docs)
+    df = Counter()
+    for d in docs:
+        df.update(d.keys())
+    vecs = []
+    for d in docs:
+        v = {t: (1 + math.log(c)) * math.log(n / df[t]) for t, c in d.items() if 2 <= df[t] <= max(3, MAX_DF * n)}
+        norm = math.sqrt(sum(x * x for x in v.values())) or 1.0
+        vecs.append({t: x / norm for t, x in v.items()})
+    return vecs
+
+
+def cluster(vecs):
+    """單趟分群：每則標題併入最相近的議題中心，否則自成一群；最後再合併相近的群。"""
+    cents, norms2, members = [], [], []
+    index = defaultdict(set)
+    for i, v in enumerate(vecs):
+        dots = defaultdict(float)
+        for t, w in v.items():
+            for c in index[t]:
+                dots[c] += w * cents[c][t]
+        best, best_s = -1, ASSIGN_T
+        for c, d in dots.items():
+            s = d / math.sqrt(norms2[c])
+            if s >= best_s:
+                best, best_s = c, s
+        if best < 0:
+            cents.append(dict(v)); norms2.append(1.0 if v else 1e-9); members.append([i])
+            for t in v:
+                index[t].add(len(cents) - 1)
+        else:
+            norms2[best] += 2 * dots[best] + 1.0
+            cen = cents[best]
+            for t, w in v.items():
+                cen[t] = cen.get(t, 0.0) + w
+                index[t].add(best)
+            members[best].append(i)
+
+    parent = list(range(len(cents)))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for a in range(len(cents)):
+        if len(members[a]) < 2:
+            continue
+        dots = defaultdict(float)
+        for t, w in cents[a].items():
+            for b in index[t]:
+                if b > a and len(members[b]) >= 2:
+                    dots[b] += w * cents[b][t]
+        for b, d in dots.items():
+            if d / math.sqrt(norms2[a] * norms2[b]) >= MERGE_T:
+                parent[find(b)] = find(a)
+    groups = defaultdict(list)
+    for c in range(len(cents)):
+        groups[find(c)].extend(members[c])
+    return [sorted(g) for g in groups.values()]
+
+
+def is_fragment(g, titles):
+    """g 的左或右幾乎總是接同一個字 → 它只是更長詞語被切斷的一段。"""
+    left, right, total = Counter(), Counter(), 0
+    for t in titles:
+        for r in runs(t):
+            k = r.find(g)
+            while k >= 0:
+                total += 1
+                left[r[k - 1] if k > 0 else ""] += 1
+                right[r[k + len(g)] if k + len(g) < len(r) else ""] += 1
+                k = r.find(g, k + 1)
+    if not total:
+        return False  # 英數詞
+    for side in (left, right):
+        ch, c = side.most_common(1)[0]
+        if ch and c / total >= 0.8:
+            return True
+    return False
+
+
+def keyphrases(idx, grams, gdf, n_all, titles, k=5):
+    size = len(idx)
+    df = Counter()
+    for i in idx:
+        df.update(grams[i])
+    need = max(2, math.ceil(0.25 * size))
+    cand = {g: c for g, c in df.items() if c >= need and g not in STOP}
+    cand = {g: c for g, c in cand.items() if not is_fragment(g, titles)}
+    scored = sorted(cand, key=lambda g: -cand[g] * math.log(n_all / gdf[g] + 1) * math.sqrt(len(g)))
+    out = []
+    for g in scored:
+        if any(g in o or o in g for o in out):
+            continue
+        out.append(g)
+        if len(out) == k:
+            break
+    return out, {g: cand[g] for g in out}
+
+
+def centroid(idx, vecs, top=30):
+    c = defaultdict(float)
+    for i in idx:
+        for t, w in vecs[i].items():
+            c[t] += w
+    norm = math.sqrt(sum(x * x for x in c.values())) or 1.0
+    full = {t: x / norm for t, x in c.items()}
+    return full, dict(sorted(full.items(), key=lambda kv: -kv[1])[:top])
+
+
+def cos(a, b):
+    if len(a) > len(b):
+        a, b = b, a
+    return sum(w * b.get(t, 0.0) for t, w in a.items())
+
+
+def parse_t(s):
+    return datetime.fromisoformat(s)
+
+
+def find_signals(idx, items, src_meta, base_share, lean_base):
+    size = len(idx)
+    sig = []
+    by_src = Counter(items[i]["source"] for i in idx)
+    top_src, top_n = by_src.most_common(1)[0]
+    name = lambda s: src_meta[s]["name"]
+
+    # 1) 單一媒體主推
+    share = top_n / size
+    if size >= 6 and share >= SINGLE_SHARE and base_share.get(top_src, 0) <= 0.30:
+        sig.append({"type": "single", "level": "high" if share >= 0.8 else "mid",
+                    "title": f"{name(top_src)}主推",
+                    "detail": f"{size} 則報導中 {top_n} 則來自{name(top_src)}（{share:.0%}），該媒體今日整體佔比只有 {base_share.get(top_src, 0):.0%}。其他媒體少有跟進。"})
+
+    # 2) 立場落差
+    lean = Counter(src_meta[items[i]["source"]].get("lean", "unknown") for i in idx)
+    g, b = lean["green"], lean["blue"]
+    if g + b >= LEAN_MIN and lean_base is not None:
+        gs = g / (g + b)
+        for side, s, base in (("green", gs, lean_base), ("blue", 1 - gs, 1 - lean_base)):
+            if s - base >= LEAN_GAP:
+                other = "blue" if side == "green" else "green"
+                sig.append({"type": "lean", "level": "high" if s >= 0.9 else "mid",
+                            "title": f"{LEAN_NAME[side]}媒體報導明顯較多",
+                            "detail": f"有立場標記的 {g + b} 則報導中，{LEAN_NAME[side]}媒體佔 {s:.0%}，今日基準為 {base:.0%}；{LEAN_NAME[other]}媒體相對冷處理。"})
+
+    # 3) 匿名／未具名消息用語
+    anon = [i for i in idx if ANON.search(items[i]["title"])]
+    if len(anon) >= 3 and len(anon) / size >= ANON_RATIO:
+        words = Counter(m for i in anon for m in ANON.findall(items[i]["title"]))
+        sig.append({"type": "anon", "level": "mid",
+                    "title": "大量未具名消息用語",
+                    "detail": f"{len(anon)} 則標題（{len(anon) / size:.0%}）使用「{'」「'.join(w for w, _ in words.most_common(3))}」等用語，消息來源不明確。"})
+
+    # 4) 獨家起頭後多家跟進
+    order = sorted(idx, key=lambda i: items[i]["time"])
+    first = order[0]
+    if EXCL.search(items[first]["title"]) and len(by_src) >= 4:
+        sig.append({"type": "exclusive", "level": "low",
+                    "title": f"由{name(items[first]['source'])}獨家起頭",
+                    "detail": f"最早一則為{name(items[first]['source'])}的獨家（{items[first]['time'][11:16]}），之後 {len(by_src) - 1} 家媒體跟進。"})
+
+    # 5) 多家同步出稿
+    firsts = {}
+    for i in order:
+        if items[i].get("est"):
+            continue
+        firsts.setdefault(items[i]["source"], parse_t(items[i]["time"]))
+    ts = sorted(firsts.values())
+    best = 0
+    for a in range(len(ts)):
+        n = sum(1 for t in ts[a:] if t - ts[a] <= timedelta(minutes=BURST_WINDOW_MIN))
+        if n > best:
+            best, best_at = n, ts[a]
+    if best >= BURST_MIN_SOURCES and best >= 0.6 * len(by_src):
+        sig.append({"type": "burst", "level": "low",
+                    "title": f"{best} 家媒體同步出稿",
+                    "detail": f"{best} 家媒體在 {best_at.strftime('%H:%M')} 起 {BURST_WINDOW_MIN} 分鐘內各自發出第一則報導，常見於記者會、新聞稿或突發事件。"})
+    return sig
+
+
+def load_history(date, days=6):
+    out = []
+    d0 = datetime.strptime(date, "%Y-%m-%d")
+    for k in range(1, days + 1):
+        p = DATA / "daily" / f"{(d0 - timedelta(days=k)).strftime('%Y-%m-%d')}.json"
+        out.append(json.loads(p.read_text(encoding="utf-8")) if p.exists() else None)
+    return out  # [昨天, 前天, ...]
+
+
+def analyze(date):
+    raw = json.loads((DATA / "raw" / f"{date}.json").read_text(encoding="utf-8"))
+    items = raw["items"]
+    cfg = raw.get("sources") or json.loads((ROOT / "pipeline" / "sources.json").read_text(encoding="utf-8"))["sources"]
+    src_meta = {s["id"]: s for s in cfg}
+    n = len(items)
+    if n == 0:
+        print(f"[analyze] {date}: 沒有標題，略過")
+        return None
+
+    vecs = vectorize(items)
+    grams = [ngrams(it["title"]) for it in items]
+    gdf = Counter()
+    for g in grams:
+        gdf.update(g)
+    src_count = Counter(it["source"] for it in items)
+    base_share = {s: c / n for s, c in src_count.items()}
+    lean_all = Counter(src_meta[it["source"]].get("lean", "unknown") for it in items)
+    lean_base = lean_all["green"] / (lean_all["green"] + lean_all["blue"]) if lean_all["green"] and lean_all["blue"] else None
+
+    groups = [g for g in cluster(vecs) if len(g) >= 3]
+    scored = []
+    for g in groups:
+        ns = len({items[i]["source"] for i in g})
+        if ns < 2 and len(g) < 6:
+            continue  # 單一媒體的小群不算議題；大群留著當「主推」訊號
+        scored.append((len(g) * (1 + math.log(ns)), g))
+    scored.sort(key=lambda x: -x[0])
+    scored = scored[:TOP_TOPICS]
+    max_heat = scored[0][0] if scored else 1.0
+
+    history = load_history(date)
+    topics, all_signals, kw_total = [], [], Counter()
+    for rank, (heat, g) in enumerate(scored, 1):
+        full, vec = centroid(g, vecs)
+        kws, kw_df = keyphrases(g, grams, gdf, n, [items[i]["title"] for i in g])
+        rep = max(g, key=lambda i: cos(vecs[i], full))
+        by_src = Counter(items[i]["source"] for i in g)
+        hours = [0] * 24
+        for i in g:
+            hours[int(items[i]["time"][11:13])] += 1
+        share = len(g) / n
+
+        # 跨日比對：往回逐日找同一議題
+        trend, days_running, alive = [], 1, True
+        for h in history:
+            m = None
+            if h:
+                cands = [(cos(vec, t.get("_v", {})), t) for t in h["topics"]]
+                cands = [c for c in cands if c[0] >= MATCH_T]
+                if cands:
+                    m = max(cands, key=lambda c: c[0])[1]
+            trend.append({"date": h["date"] if h else None, "share": round(m["share"], 4) if m else 0})
+            if m and alive:
+                days_running += 1
+            else:
+                alive = False
+        prev = trend[0]["share"] if trend else 0
+        if not history or history[0] is None:
+            status = "—"
+        elif prev == 0:
+            status = "新議題"
+        elif share >= prev * 1.5:
+            status = "升溫"
+        elif share <= prev * 0.67:
+            status = "降溫"
+        else:
+            status = "延燒"
+
+        signals = find_signals(g, items, src_meta, base_share, lean_base)
+        if status == "新議題" and rank <= 5:
+            signals.append({"type": "spike", "level": "low", "title": "今日突然竄起",
+                            "detail": f"昨天沒有對應議題，今天直接進入熱度第 {rank} 名。"})
+        order = sorted(g, key=lambda i: items[i]["time"])
+        topic = {
+            "id": f"t{rank}", "rank": rank,
+            "label": "・".join(kws[:2]) if kws else re.split(r"[\s，、：:｜|！？]", items[rep]["title"])[0][:14],
+            "keywords": kws, "rep": items[rep]["title"],
+            "size": len(g), "n_sources": len(by_src),
+            "heat": round(100 * heat / max_heat), "share": round(share, 4),
+            "status": status, "days": days_running,
+            "trend": list(reversed(trend)) + [{"date": date, "share": round(share, 4)}],
+            "by_source": dict(by_src), "hours": hours, "signals": signals,
+            "headlines": [{"s": items[i]["source"], "t": items[i]["title"], "l": items[i]["link"], "h": items[i]["time"][11:16]}
+                          for i in order[:MAX_HEADLINES]],
+            "_v": {t: round(w, 4) for t, w in vec.items()},
+        }
+        topics.append(topic)
+        for s in signals:
+            all_signals.append({**s, "topic": topic["id"], "label": topic["label"]})
+        for k in kws:
+            kw_total[k] += kw_df[k]
+
+    # 媒體議程相似度：各媒體在前幾大議題上的版面分配有多像
+    ids = [s for s, c in src_count.most_common() if c >= 15]
+    mat = []
+    tv = {s: [t["by_source"].get(s, 0) / src_count[s] for t in topics] for s in ids}
+    for a in ids:
+        row = []
+        for b in ids:
+            na = math.sqrt(sum(x * x for x in tv[a])); nb = math.sqrt(sum(x * x for x in tv[b]))
+            row.append(round(sum(x * y for x, y in zip(tv[a], tv[b])) / (na * nb), 2) if na and nb else 0)
+        mat.append(row)
+
+    level_rank = {"high": 0, "mid": 1, "low": 2}
+    all_signals.sort(key=lambda s: (level_rank[s["level"]], int(s["topic"][1:])))
+    in_topics = sum(t["size"] for t in topics)
+    out = {
+        "date": date, "updated_at": raw.get("updated_at") or datetime.now(TPE).isoformat(timespec="seconds"),
+        "mode": "demo" if raw.get("demo") else "live",
+        "totals": {"headlines": n, "sources": len(src_count), "topics": len(topics),
+                   "top3_share": round(sum(t["size"] for t in topics[:3]) / n, 4),
+                   "in_topics_share": round(in_topics / n, 4)},
+        "sources": [{"id": s, "name": src_meta[s]["name"], "lean": src_meta[s].get("lean", "unknown"),
+                     "kind": src_meta[s].get("kind", ""), "count": c} for s, c in src_count.most_common()],
+        "topics": topics, "signals": all_signals,
+        "keywords": [{"text": k, "n": c} for k, c in kw_total.most_common(40)],
+        "similarity": {"ids": ids, "matrix": mat},
+    }
+
+    out_dir = DATA / "daily"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{date}.json"
+    prev_ai = None
+    if path.exists():
+        prev_ai = json.loads(path.read_text(encoding="utf-8"))
+    carry_ai(out, prev_ai)
+    path.write_text(json.dumps(out, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    write_index()
+    print(f"[analyze] {date}: {n} 則標題 → {len(topics)} 個議題，{len(all_signals)} 個訊號")
+    return path
+
+
+def carry_ai(out, prev):
+    """同一天重跑時，沿用上一版 AI 對相同議題的註解，避免每小時都呼叫 API。"""
+    if not prev:
+        return
+    if prev.get("ai_overview"):
+        out["ai_overview"] = prev["ai_overview"]
+        out["ai_meta"] = prev.get("ai_meta")
+    old = [t for t in prev.get("topics", []) if t.get("ai")]
+    for t in out["topics"]:
+        best = max(old, key=lambda o: cos(t["_v"], o.get("_v", {})), default=None)
+        if best and cos(t["_v"], best.get("_v", {})) >= 0.6:
+            t["ai"] = best["ai"]
+
+
+def write_index():
+    days = sorted(p.stem for p in (DATA / "daily").glob("*.json"))
+    (DATA / "index.json").write_text(json.dumps({"dates": days, "latest": days[-1] if days else None}), encoding="utf-8")
+
+
+if __name__ == "__main__":
+    date = sys.argv[1] if len(sys.argv) > 1 else datetime.now(TPE).strftime("%Y-%m-%d")
+    analyze(date)

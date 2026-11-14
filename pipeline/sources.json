@@ -1,0 +1,54 @@
+{
+  "_note": "媒體來源設定。type=rss 直接抓該媒體 RSS；type=gnews 透過 Google News RSS 以 site: 查詢取得該媒體當日標題（給沒有公開 RSS 的媒體用）。lean 為一般外界認知的立場傾向（green/blue/neutral/unknown），僅用於『報導分布落差』計算，可自行調整或全部改成 unknown。",
+  "sources": [
+    {"id": "cna", "name": "中央社", "kind": "通訊社", "lean": "neutral", "feeds": [
+      {"type": "rss", "url": "https://feeds.feedburner.com/rsscna/politics"},
+      {"type": "rss", "url": "https://feeds.feedburner.com/rsscna/finance"},
+      {"type": "rss", "url": "https://feeds.feedburner.com/rsscna/social"},
+      {"type": "rss", "url": "https://feeds.feedburner.com/rsscna/lifehealth"},
+      {"type": "rss", "url": "https://feeds.feedburner.com/rsscna/mainland"},
+      {"type": "rss", "url": "https://feeds.feedburner.com/rsscna/local"}
+    ]},
+    {"id": "pts", "name": "公視新聞", "kind": "公共媒體", "lean": "neutral", "feeds": [
+      {"type": "rss", "url": "https://news.pts.org.tw/xml/newsfeed.xml"}
+    ]},
+    {"id": "ltn", "name": "自由時報", "kind": "報系", "lean": "green", "feeds": [
+      {"type": "rss", "url": "https://news.ltn.com.tw/rss/all.xml"},
+      {"type": "rss", "url": "https://news.ltn.com.tw/rss/politics.xml"}
+    ]},
+    {"id": "udn", "name": "聯合新聞網", "kind": "報系", "lean": "blue", "feeds": [
+      {"type": "rss", "url": "https://udn.com/rssfeed/news/2/6638?ch=news"},
+      {"type": "gnews", "site": "udn.com"}
+    ]},
+    {"id": "chinatimes", "name": "中時新聞網", "kind": "報系", "lean": "blue", "feeds": [
+      {"type": "gnews", "site": "chinatimes.com"}
+    ]},
+    {"id": "ettoday", "name": "ETtoday", "kind": "網路媒體", "lean": "unknown", "feeds": [
+      {"type": "rss", "url": "https://feeds.feedburner.com/ettoday/realtime"}
+    ]},
+    {"id": "setn", "name": "三立新聞網", "kind": "電視台", "lean": "green", "feeds": [
+      {"type": "gnews", "site": "setn.com"}
+    ]},
+    {"id": "ftv", "name": "民視新聞", "kind": "電視台", "lean": "green", "feeds": [
+      {"type": "gnews", "site": "ftvnews.com.tw"}
+    ]},
+    {"id": "tvbs", "name": "TVBS", "kind": "電視台", "lean": "blue", "feeds": [
+      {"type": "gnews", "site": "news.tvbs.com.tw"}
+    ]},
+    {"id": "ebc", "name": "東森新聞", "kind": "電視台", "lean": "unknown", "feeds": [
+      {"type": "gnews", "site": "news.ebc.net.tw"}
+    ]},
+    {"id": "newtalk", "name": "新頭殼", "kind": "網路媒體", "lean": "unknown", "feeds": [
+      {"type": "rss", "url": "https://newtalk.tw/rss/all"}
+    ]},
+    {"id": "storm", "name": "風傳媒", "kind": "網路媒體", "lean": "unknown", "feeds": [
+      {"type": "gnews", "site": "storm.mg"}
+    ]},
+    {"id": "mirror", "name": "鏡週刊", "kind": "週刊", "lean": "unknown", "feeds": [
+      {"type": "gnews", "site": "mirrormedia.mg"}
+    ]},
+    {"id": "nownews", "name": "NOWnews", "kind": "網路媒體", "lean": "unknown", "feeds": [
+      {"type": "gnews", "site": "nownews.com"}
+    ]}
+  ]
+}
