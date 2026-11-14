@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>台灣輿情觀測｜每日新聞標題熱度</title>
+<title>台灣輿情觀測｜今天台灣在吵什麼？</title>
 <meta name="description" content="每天彙整國內各大媒體新聞標題，分析今日討論熱度、各媒體著重議題與報導分布異常訊號。">
 <link rel="stylesheet" href="assets/style.css">
 </head>
@@ -11,8 +11,8 @@
 <div class="viz-root">
   <header class="top">
     <div class="brand">
-      <p class="eyebrow">每日新聞標題分析</p>
-      <h1>台灣輿情觀測</h1>
+      <p class="eyebrow">每日新聞標題雷達</p>
+      <h1>今天台灣<mark>在吵什麼</mark>？</h1>
     </div>
     <div class="datebar">
       <button id="prev" type="button" aria-label="前一天">‹</button>
@@ -21,6 +21,8 @@
     </div>
     <p class="updated" id="updated"></p>
   </header>
+
+  <div class="ticker" id="ticker" aria-hidden="true" hidden><div></div></div>
 
   <div id="demo" class="banner" hidden>
     <strong>示範資料</strong>　目前顯示的媒體與標題皆為虛構，用來預覽版面。排程開始抓取真實 RSS 後會自動換成當日資料。
