@@ -47,10 +47,8 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           AI_MODEL: ${{ vars.AI_MODEL }}
-          AI_EVERY_HOURS: ${{ vars.AI_EVERY_HOURS }}
+          AI_HOURS: ${{ vars.AI_HOURS }}
         run: |
-          [ -n "$AI_MODEL" ] || unset AI_MODEL
-          [ -n "$AI_EVERY_HOURS" ] || unset AI_EVERY_HOURS
           python pipeline/run.py ${{ inputs.force_ai && '--force-ai' || '' }}
 
       - name: Build site

@@ -70,12 +70,53 @@
       st(pct(t.top3_share, 0), '版面集中在前三大議題'));
   }
 
+  function aiTag(d) {
+    var m = d.ai_meta || {};
+    return '🤖 AI 生成' + (m.at ? '・' + m.at.slice(11, 16) + ' 更新' : '') + '・只依據標題歸納，可能有誤';
+  }
+
+  /* 60 秒導讀：AI 挑三件事用白話講完；沒有 AI 資料時整塊不顯示 */
+  function briefing(d) {
+    var b = d.ai_brief;
+    if (!b || !b.items || !b.items.length) return null;
+    var el = h('section', { class: 'brief' },
+      h('div', { class: 'brief-head' }, h('h2', { text: '60 秒導讀' }), h('span', { text: '今天只看三件事' })),
+      h('p', { class: 'brief-lead', text: b.lead }));
+    var ol = h('ol');
+    b.items.forEach(function (it, i) {
+      var t = it.id ? d.topics.filter(function (k) { return k.id === it.id; })[0] : null;
+      var body = h('div', null, h('b', { text: (t && title(t)) || it.title }), h('p', { text: it.text }));
+      var row = t ? h('button', { type: 'button', on: { click: function () { openTopic(t); } } }, h('span', { class: 'n', text: String(i + 1) }), body)
+                  : h('div', { class: 'row' }, h('span', { class: 'n', text: String(i + 1) }), body);
+      ol.appendChild(h('li', null, row));
+    });
+    el.appendChild(ol);
+    el.appendChild(h('p', { class: 'ai-tag', text: aiTag(d) }));
+    return el;
+  }
+
+  /* 同一件事，幾種說法：AI 把標題歸成 2–3 種切角，每種附原始標題當證據 */
+  function anglesBox(t, max) {
+    var list = t.ai && t.ai.angles;
+    if (!list || list.length < 2) return null;
+    var box = h('div', { class: 'angles' }, h('p', { class: 'label', text: '同一件事，' + list.length + ' 種說法' }));
+    list.forEach(function (a) {
+      var item = h('div', { class: 'angle' }, h('b', { text: a.name }), h('p', { text: a.desc }));
+      a.headlines.slice(0, max || 1).forEach(function (x) {
+        item.appendChild(h('p', { class: 'eg' }, '「' + x.t + '」', h('small', { text: srcName(x.s) })));
+      });
+      box.appendChild(item);
+    });
+    box.appendChild(h('p', { class: 'ai-tag', text: '🤖 AI 依標題樣本歸納，僅供參考' }));
+    return box;
+  }
+
   /* 「新聞在講什麼」：有 AI 摘要就用，沒有就列出角度不同的代表標題 */
   function whatBox(t, withSource) {
     var box = h('div', { class: 'what' }, h('p', { class: 'label', text: '新聞在講什麼' }));
     if (t.ai && t.ai.summary) {
       box.appendChild(h('p', { text: t.ai.summary }));
-      box.appendChild(h('p', { class: 'label', style: 'margin:6px 0 0;font-weight:500', text: '🤖 AI 摘要，僅依標題生成' }));
+      box.appendChild(h('p', { class: 'ai-tag', text: '🤖 AI 摘要，只依據標題歸納' }));
       return box;
     }
     var ul = h('ul');
@@ -104,6 +145,7 @@
         h('div', { class: 'head' }, h('div', { class: 'badge', text: String(t.rank) }),
           h('div', null, h('h3', { text: title(t) }), chips.children.length ? chips : null)),
         whatBox(t),
+        anglesBox(t, 1),
         h('div', { class: 'cfoot' }, h('p', { class: 'meta', text: metaLine(t) }), bar,
           h('button', { class: 'btn', type: 'button', text: '看詳細', on: { click: function () { openTopic(t); } } }))));
     });
@@ -262,6 +304,7 @@
     box.appendChild(h('h2', { id: 'sheet-title', text: title(t) }));
     box.appendChild(h('p', { class: 'lead', text: '熱度第 ' + t.rank + ' 名・' + metaLine(t) + (t.days > 1 ? '・已連續 ' + t.days + ' 天' : '') }));
     box.appendChild(whatBox(t));
+    var ang = anglesBox(t, 3); if (ang) box.appendChild(ang);
     var kw = h('div', { class: 'kw' });
     t.keywords.forEach(function (k) { kw.appendChild(h('span', { class: 'chip', text: k })); });
     box.appendChild(kw);
@@ -320,10 +363,7 @@
     document.getElementById('updated').textContent = '資料更新：' + d.updated_at.replace('T', ' ').slice(0, 16) + '（台北時間）';
     if (!d.topics.length) { app.appendChild(h('p', { class: 'empty', text: '這一天的標題還不夠多，無法歸納議題。' })); return; }
     app.appendChild(stats(d));
-    if (d.ai_overview) {
-      app.appendChild(h('div', { class: 'overview' }, h('p', { text: d.ai_overview }),
-        h('small', { text: '🤖 AI 摘要' + (d.ai_meta ? '・' + d.ai_meta.model + '・' + d.ai_meta.at.slice(11, 16) : '') + '。僅根據標題生成，可能有誤。' })));
-    }
+    var br = briefing(d); if (br) app.appendChild(br);
     [topCards, signals, others, coverage, keywords, similarity].forEach(function (f) { var el = f(d); if (el) app.appendChild(el); });
   }
 

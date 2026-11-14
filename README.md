@@ -12,7 +12,7 @@
 | `pipeline/sources.json` | 媒體清單、RSS 位址、立場標記（可自行調整） |
 | `pipeline/fetch.py` | 抓 RSS 標題，累積到 `data/raw/<日期>.json` |
 | `pipeline/analyze.py` | 議題分群、熱度、異常訊號 → `data/daily/<日期>.json` |
-| `pipeline/ai_enrich.py` | （選用）Claude API 命名、摘要、切角比較 |
+| `pipeline/ai_enrich.py` | （選用）Claude API：語意合併、60 秒導讀、報導切角 |
 | `pipeline/make_demo.py` | 產生虛構的示範資料 |
 | `.github/workflows/update.yml` | 每小時抓取、分析、部署 |
 
@@ -21,7 +21,24 @@
 1. 合併到 `main`。
 2. Settings → Pages → Source 選 **Deploy from a branch**，Branch 選 **gh-pages**（第一次排程跑完後才會出現）。
 3. Actions → **Update data and deploy** → Run workflow，看 log 裡每家媒體是否抓得到。
-4. （選用）Settings → Secrets and variables → Actions 新增 secret `ANTHROPIC_API_KEY` 啟用 AI 註解；可用 variable `AI_MODEL`、`AI_EVERY_HOURS` 調整。
+
+## 啟用 AI（選用）
+
+設定金鑰後，每天台北時間 8、13、21 點各呼叫一次 Claude API，產生三樣東西：
+
+- **語意合併**：把用詞不同、其實是同一事件的議題合併（結果存在 `data` 分支的 `merges/`，每小時分群都會套用）。
+- **60 秒導讀**：首頁最上方，三件事的白話說明。
+- **同一件事，幾種說法**：前幾大議題的 2–3 種報導切角，各附原始標題。
+
+步驟：
+
+1. 到 Claude Console（platform.claude.com）註冊，在 Billing 購買額度，再到 API keys 建立金鑰（`sk-ant-` 開頭，只會顯示一次）。
+2. 本 repo → Settings → Secrets and variables → Actions → New repository secret，Name 填 `ANTHROPIC_API_KEY`，Secret 貼上金鑰。
+3. Actions → Update data and deploy → Run workflow，勾選「這次強制執行 AI 註解」。
+4. 看執行紀錄裡 `[ai]` 開頭的幾行，會顯示合併了幾組、註解了幾個議題與 token 用量。
+
+可調整的 repository variables（同一頁的 Variables 分頁）：`AI_MODEL`（預設 `claude-haiku-5-5`）、`AI_HOURS`（預設 `8,13,21`）。
+金鑰只放在 Secrets，不要寫進程式碼或貼到任何對話裡。
 
 真實資料存放在 `data` 分支（永遠只有一個 commit），`main` 上的 `data/` 只是示範資料。
 

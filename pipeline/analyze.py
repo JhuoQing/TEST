@@ -55,6 +55,37 @@ def tidy(title):
 PREFIX = re.compile(r"^(?:[(（【\[][^)）】\]]{1,6}[)）】\]]\s*)?(?:[^\s／/》]{1,8}[／》]\s*)?(?:[\u4e00-\u9fff]{2,4}觀點[：:]\s*)?")
 
 
+def title_key(title):
+    """標題的比對鍵：去掉標點與空白。AI 合併提示用它記住「哪些標題屬於同一事件」。"""
+    return re.sub(r"[\W_]+", "", title).lower()
+
+
+def apply_merges(groups, items, date):
+    """套用 AI 存下的合併提示（data/merges/<日期>.json）：含有同一組標題的群合併成一群。"""
+    path = DATA / "merges" / f"{date}.json"
+    if not path.exists():
+        return groups
+    hints = [set(g) for g in json.loads(path.read_text(encoding="utf-8")).get("groups", [])]
+    keys = [title_key(it["title"]) for it in items]
+    parent = list(range(len(groups)))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for hint in hints:
+        hit = [gi for gi, g in enumerate(groups) if sum(1 for i in g if keys[i] in hint) >= min(2, len(g))
+               and sum(1 for i in g if keys[i] in hint) >= 0.3 * len(g)]
+        for gi in hit[1:]:
+            parent[find(gi)] = find(hit[0])
+    merged = defaultdict(list)
+    for gi, g in enumerate(groups):
+        merged[find(gi)].extend(g)
+    return [sorted(g) for g in merged.values()]
+
+
 def runs(title):
     """分析時略過「NBA／」「快訊／」「（影）」「某某觀點：」這類欄目前綴，避免同欄目的文章被當成同一議題。"""
     return CJK.findall(PREFIX.sub("", title, count=1))
@@ -311,7 +342,7 @@ def analyze(date):
     lean_all = Counter(src_meta[it["source"]].get("lean", "unknown") for it in items)
     lean_base = lean_all["green"] / (lean_all["green"] + lean_all["blue"]) if lean_all["green"] and lean_all["blue"] else None
 
-    groups = [g for g in cluster(vecs) if len(g) >= 3]
+    groups = [g for g in apply_merges(cluster(vecs), items, date) if len(g) >= 3]
     scored = []
     for g in groups:
         ns = len({items[i]["source"] for i in g})
@@ -427,17 +458,24 @@ def analyze(date):
 
 
 def carry_ai(out, prev):
-    """同一天重跑時，沿用上一版 AI 對相同議題的註解，避免每小時都呼叫 API。"""
+    """同一天重跑時，沿用上一版 AI 對相同議題的註解，避免每小時都呼叫 API。
+
+    議題編號（t1、t2…）是排名，每次重跑都可能變，所以用議題向量比對新舊議題。"""
     if not prev:
         return
-    if prev.get("ai_overview"):
-        out["ai_overview"] = prev["ai_overview"]
-        out["ai_meta"] = prev.get("ai_meta")
-    old = [t for t in prev.get("topics", []) if t.get("ai")]
+    if prev.get("ai_meta"):
+        out["ai_meta"] = prev["ai_meta"]
+    old_new = {}
     for t in out["topics"]:
-        best = max(old, key=lambda o: cos(t["_v"], o.get("_v", {})), default=None)
+        best = max(prev.get("topics", []), key=lambda o: cos(t["_v"], o.get("_v", {})), default=None)
         if best and cos(t["_v"], best.get("_v", {})) >= 0.6:
-            t["ai"] = best["ai"]
+            old_new.setdefault(best["id"], t["id"])
+            if best.get("ai"):
+                t["ai"] = best["ai"]
+    brief = prev.get("ai_brief")
+    if brief:
+        items = [{**it, "id": old_new.get(it.get("id"))} for it in brief.get("items", [])]
+        out["ai_brief"] = {**brief, "items": items}
 
 
 def write_index():

@@ -48,14 +48,39 @@ h1 mark { background: var(--lime); color: #17131f; padding: 0 .12em; border-radi
 .stat b { display: block; font-size: 26px; font-weight: 900; line-height: 1.2; font-variant-numeric: tabular-nums; }
 .stat span { font-size: 12px; color: var(--text-2); font-weight: 600; }
 
+/* 60 秒導讀 */
+.brief { margin-top: 20px; padding: 16px; border: 2px solid var(--edge); border-radius: 20px; background: var(--lime); color: #17131f; }
+.brief-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.brief-head h2 { font-size: 22px; font-weight: 900; }
+.brief-head span { font-size: 12px; font-weight: 800; background: #17131f; color: #fff; padding: 2px 9px; border-radius: 99px; }
+.brief-lead { font-size: 16px; font-weight: 700; line-height: 1.5; margin-top: 8px; }
+.brief ol { list-style: none; padding: 0; margin-top: 12px; display: grid; gap: 8px; }
+.brief li > * { display: grid; grid-template-columns: 30px 1fr; gap: 10px; width: 100%; text-align: left; padding: 11px 12px; background: #fff; color: #17131f; border: 2px solid #17131f; border-radius: 14px; }
+.brief li > button { cursor: pointer; }
+.brief li > button:hover, .brief li > button:focus-visible { background: #fff0d4; outline: none; }
+.brief .n { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: #17131f; color: #fff; font-weight: 900; font-size: 14px; }
+.brief li b { font-size: 15px; font-weight: 900; }
+.brief li p { font-size: 14px; line-height: 1.55; margin-top: 2px; }
+.ai-tag { font-size: 11px; font-weight: 600; opacity: .7; margin-top: 8px; }
+
+/* 同一件事，幾種說法 */
+.angles { padding: 12px 14px; border: 2px dashed var(--edge); border-radius: 14px; }
+.angles .label { font-size: 12px; font-weight: 800; color: var(--text-2); margin-bottom: 8px; }
+.angles .angle { padding: 8px 0 8px 12px; border-left: 4px solid var(--violet); }
+.angles .angle + .angle { margin-top: 10px; }
+.angles .angle:nth-of-type(2) { border-left-color: var(--pink); }
+.angles .angle:nth-of-type(3) { border-left-color: var(--cyan); }
+.angles .angle b { font-size: 14.5px; font-weight: 900; }
+.angles .angle p { font-size: 13.5px; line-height: 1.5; }
+.angles .eg { color: var(--text-2); margin-top: 4px; }
+.angles .eg small { display: block; font-size: 11.5px; color: var(--text-3); font-weight: 600; }
+.sheet .angles { margin-top: 12px; }
+
 /* 區塊標題 */
 section.block { margin-top: 44px; }
 .block > h2 { font-size: 22px; font-weight: 900; display: inline-block; background: linear-gradient(transparent 60%, var(--lime) 60%); }
 @media (prefers-color-scheme: dark) { .block > h2 { background: linear-gradient(transparent 64%, rgba(200, 255, 61, .35) 64%); } }
 .block > .sub { font-size: 13px; color: var(--text-2); margin: 6px 0 16px; }
-.overview { margin-top: 18px; padding: 14px 16px; background: var(--card-2); border: 2px dashed var(--edge); border-radius: 18px; font-weight: 500; }
-.overview small { display: block; color: var(--text-3); font-size: 11px; margin-top: 6px; font-weight: 400; }
-
 /* 前五大主題卡片 */
 .cards { display: grid; gap: 14px; }
 .card { background: var(--card); border: 2px solid var(--edge); border-radius: 20px; padding: 16px; display: grid; gap: 12px; }
@@ -173,3 +198,4 @@ svg .val { fill: var(--text); font-weight: 900; font-size: 12px; }
 
 .foot { margin-top: 48px; padding: 16px; border: 2px solid var(--edge); border-radius: 18px; background: var(--card); font-size: 12.5px; color: var(--text-2); display: grid; gap: 8px; }
 .foot strong { color: var(--text); }
+.what .ai-tag { font-size: 11px; line-height: 1.4; }
