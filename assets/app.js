@@ -4,8 +4,8 @@
   'use strict';
   var SVG = 'http://www.w3.org/2000/svg';
   var LEAN = { green: '綠', blue: '藍', neutral: '中', unknown: '' };
-  var STATUS = { '新議題': '● 新議題', '升溫': '▲ 升溫', '降溫': '▼ 降溫', '延燒': '→ 延燒' };
-  var LEVEL = { high: '⚠ 高度留意', mid: '△ 留意', low: '○ 參考' };
+  var STATUS = { '新議題': '🆕 新議題', '升溫': '📈 升溫', '降溫': '📉 降溫', '延燒': '🔁 延燒' };
+  var LEVEL = { high: '🚨 高度留意', mid: '⚠️ 留意', low: '👀 參考' };
   var state = { dates: [], date: null, day: null, cache: {}, showAll: false };
   var app = document.getElementById('app');
 
@@ -70,15 +70,35 @@
       tile(pct(t.top3_share, 0), '版面集中在前三大議題'));
   }
 
+  function hero(d) {
+    var t = d.topics[0];
+    return h('button', { class: 'hero', type: 'button', on: { click: function () { openTopic(t); } } },
+      h('span', { class: 'tag', text: '🔥 今日最熱' }),
+      h('span', { class: 'go', 'aria-hidden': 'true', text: '→' }),
+      h('h2', { text: title(t) }),
+      h('p', { text: (t.ai && t.ai.summary) || t.rep }),
+      h('div', { class: 'stats' },
+        h('span', { text: t.size + ' 則報導' }), h('span', { text: t.n_sources + ' 家媒體' }),
+        h('span', { text: '佔版面 ' + pct(t.share) }), STATUS[t.status] ? h('span', { text: STATUS[t.status] }) : null));
+  }
+
+  function ticker(d) {
+    var el = document.getElementById('ticker'), inner = el.firstElementChild;
+    inner.textContent = '';
+    var words = d.keywords.slice(0, 14);
+    el.hidden = words.length < 4;
+    for (var r = 0; r < 2; r++) words.forEach(function (k) { inner.appendChild(h('span', { text: k.text })); });
+  }
+
   function ranking(d) {
-    var el = block('今日熱度榜', '大家今天在談什麼。長條為熱度指數（最高 = 100），點任一議題看各家標題。');
+    var el = block('熱度榜 🔥', '大家今天在談什麼。長條為熱度指數（最高 = 100），點任一議題看各家標題。');
     var list = h('ol', { class: 'rank' });
     var shown = state.showAll ? d.topics : d.topics.slice(0, 10);
     shown.forEach(function (t) {
       var flags = t.signals.filter(function (x) { return x.level !== 'low'; }).length;
       var name = h('span', { class: 'name', text: title(t) });
       if (STATUS[t.status]) name.appendChild(h('span', { class: 'chip', text: STATUS[t.status] }));
-      if (flags) name.appendChild(h('span', { class: 'chip flag', text: '⚠ ' + flags + ' 訊號' }));
+      if (flags) name.appendChild(h('span', { class: 'chip flag', text: '👀 ' + flags + ' 訊號' }));
       list.appendChild(h('li', null, h('button', { type: 'button', on: { click: function () { openTopic(t); } } },
         h('span', { class: 'no', text: String(t.rank) }),
         name,
@@ -95,7 +115,7 @@
   }
 
   function signals(d) {
-    var el = block('異常訊號', '報導分布或用語不尋常的議題。這是提醒你去看的線索，不是結論。');
+    var el = block('有點怪怪的 👀', '報導分布或用語不尋常的議題。這是提醒你去看的線索，不是結論。');
     var list = d.signals.filter(function (x) { return x.level !== 'low'; });
     var low = d.signals.length - list.length;
     if (!list.length) { el.appendChild(h('p', { class: 'empty', text: '今天沒有偵測到需要留意的訊號。' })); return el; }
@@ -120,7 +140,7 @@
   }
 
   function coverage(d) {
-    var el = block('各媒體把版面給了誰', '每格是該媒體今日標題中，有多少比例在報這個議題。橫向比較可看出誰重押、誰冷處理。');
+    var el = block('誰在推什麼 📰', '每格是該媒體今日標題中，有多少比例在報這個議題。橫向比較可看出誰重押、誰冷處理。');
     var srcs = d.sources.filter(function (x) { return x.count >= 5; });
     var topics = d.topics.slice(0, 10), max = 0;
     topics.forEach(function (t) { srcs.forEach(function (x) { max = Math.max(max, (t.by_source[x.id] || 0) / x.count); }); });
@@ -144,12 +164,12 @@
   }
 
   function keywords(d) {
-    var el = block('今日關鍵詞', '字越大，出現在越多則標題裡。');
+    var el = block('今日關鍵詞 💬', '字越大，出現在越多則標題裡。');
     var max = d.keywords.length ? d.keywords[0].n : 1;
     var box = h('div', { class: 'words' });
     d.keywords.slice(0, 30).forEach(function (k) {
-      var size = 13 + Math.round(17 * Math.sqrt(k.n / max));
-      box.appendChild(h('span', { style: 'font-size:' + size + 'px;font-weight:' + (size > 22 ? 800 : 500) }, k.text, h('small', { text: String(k.n) })));
+      var size = 13 + Math.round(13 * Math.sqrt(k.n / max));
+      box.appendChild(h('span', { class: box.children.length < 5 ? 'hot' : '', style: 'font-size:' + size + 'px' }, k.text, h('small', { text: String(k.n) })));
     });
     el.appendChild(box);
     return el;
@@ -158,7 +178,7 @@
   function similarity(d) {
     var sim = d.similarity;
     if (!sim || sim.ids.length < 3) return null;
-    var el = block('誰跟誰的議程最像', '兩家媒體在各議題的版面分配越接近，數字越高（1.00 = 完全一樣）。長期同步的媒體值得一起觀察。');
+    var el = block('誰跟誰最同步 🤝', '兩家媒體在各議題的版面分配越接近，數字越高（1.00 = 完全一樣）。長期同步的媒體值得一起觀察。');
     var head = h('tr', null, h('th', { text: '' }));
     sim.ids.forEach(function (id) { head.appendChild(h('th', { scope: 'col', text: srcName(id) })); });
     var body = h('tbody');
@@ -236,9 +256,9 @@
     }
 
     box.appendChild(h('h3', { text: '近七日版面佔比' }));
-    box.appendChild(trendChart(t));
+    box.appendChild(h('div', { class: 'chart' }, trendChart(t)));
     box.appendChild(h('h3', { text: '今日各小時報導則數' }));
-    box.appendChild(hourChart(t));
+    box.appendChild(h('div', { class: 'chart' }, hourChart(t)));
 
     box.appendChild(h('h3', { text: '各媒體報導則數（括號為該媒體今日標題中的佔比）' }));
     var bars = h('div', { class: 'srcbars' });
@@ -273,10 +293,12 @@
     document.getElementById('demo').hidden = d.mode !== 'demo';
     document.getElementById('updated').textContent = '資料更新：' + d.updated_at.replace('T', ' ').slice(0, 16) + '（台北時間）';
     if (!d.topics.length) { app.appendChild(h('p', { class: 'empty', text: '這一天的標題還不夠多，無法歸納議題。' })); return; }
+    ticker(d);
+    app.appendChild(hero(d));
     app.appendChild(tiles(d));
     if (d.ai_overview) {
       app.appendChild(h('div', { class: 'overview' }, h('p', { text: d.ai_overview }),
-        h('small', { text: 'AI 摘要' + (d.ai_meta ? '・' + d.ai_meta.model + '・' + d.ai_meta.at.slice(11, 16) : '') + '。僅根據標題生成，可能有誤。' })));
+        h('small', { text: '🤖 AI 摘要' + (d.ai_meta ? '・' + d.ai_meta.model + '・' + d.ai_meta.at.slice(11, 16) : '') + '。僅根據標題生成，可能有誤。' })));
     }
     [ranking, signals, coverage, keywords, similarity].forEach(function (f) { var el = f(d); if (el) app.appendChild(el); });
   }
