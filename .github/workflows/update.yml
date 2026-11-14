@@ -15,8 +15,6 @@ on:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 concurrency:
   group: update-data
@@ -25,9 +23,8 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      REMOTE: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
     steps:
       - uses: actions/checkout@v4
 
@@ -37,12 +34,11 @@ jobs:
 
       # 資料放在獨立的 data 分支（永遠只有一個 commit），main 只放程式碼，避免 repo 歷史膨脹
       - name: Restore data branch
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           rm -rf data
           if git ls-remote --exit-code --heads origin data >/dev/null 2>&1; then
-            git clone --depth 1 --branch data "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" data
+            git clone --depth 1 --branch data "$REMOTE" data
+            rm -rf data/.git
           else
             mkdir data
           fi
@@ -57,19 +53,6 @@ jobs:
           [ -n "$AI_EVERY_HOURS" ] || unset AI_EVERY_HOURS
           python pipeline/run.py ${{ inputs.force_ai && '--force-ai' || '' }}
 
-      - name: Save data branch
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          cd data
-          rm -rf .git
-          git init -q -b data
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -q -m "data: $(TZ=Asia/Taipei date '+%Y-%m-%d %H:%M')"
-          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" data
-
       - name: Build site
         run: |
           mkdir -p _site/data
@@ -77,9 +60,18 @@ jobs:
           cp -r data/daily data/index.json data/health.json _site/data/
           touch _site/.nojekyll
 
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
-
-      - id: deploy
-        uses: actions/deploy-pages@v4
+      # 兩個分支都用「單一 commit 強制推送」：data 存資料，gh-pages 是 GitHub Pages 實際提供的網站
+      - name: Publish data and gh-pages branches
+        run: |
+          publish() {
+            cd "$1"
+            git init -q -b "$2"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -q -m "$2: $(TZ=Asia/Taipei date '+%Y-%m-%d %H:%M')"
+            git push -q -f "$REMOTE" "$2"
+            cd "$GITHUB_WORKSPACE"
+          }
+          publish data data
+          publish _site gh-pages

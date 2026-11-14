@@ -2,7 +2,7 @@
 """把當日標題分群成議題、計算熱度與異常訊號，輸出 data/daily/<日期>.json。
 
 只用 Python 標準函式庫，不需要斷詞套件：中文以「字元 bigram」做 TF-IDF，
-關鍵詞用高頻 n-gram 找。所有門檻集中在下面的常數，接上真實資料後可以調整。
+關鍵詞用高頻 n-gram 找。所有門檻集中在下面的常數；分群門檻已用 2026-11-14 的真實標題校過一次。
 """
 import json
 import math
@@ -17,36 +17,54 @@ DATA = ROOT / "data"
 TPE = timezone(timedelta(hours=8))
 
 # ---- 可調參數 -------------------------------------------------------------
-ASSIGN_T = 0.20        # 標題與議題中心的 cosine 相似度門檻
-MERGE_T = 0.38         # 兩個議題合併的門檻
+ASSIGN_T = 0.13        # 標題與議題中心的 cosine 相似度門檻
+MERGE_T = 0.26         # 兩個議題合併的門檻
 MAX_DF = 0.12          # 出現在超過 12% 標題的 bigram 視為無鑑別力
 TOP_TOPICS = 30        # 輸出前幾大議題
 MAX_HEADLINES = 60     # 每個議題最多保留幾則標題
 SINGLE_SHARE = 0.60    # 單一媒體佔比達此值 → 「單一媒體主推」
-LEAN_MIN = 8           # 有立場標記的報導至少幾則才計算立場落差
-LEAN_GAP = 0.30        # 與當日基準差距達此值才提示
+LEAN_MIN = 10          # 有立場標記的報導至少幾則才計算立場落差
+LEAN_GAP = 0.35        # 與當日基準差距達此值才提示
 ANON_RATIO = 0.30      # 含匿名消息用語的標題佔比
 BURST_WINDOW_MIN = 20  # 同步出稿的時間窗（分鐘）
 BURST_MIN_SOURCES = 5
 MATCH_T = 0.30         # 跨日議題比對門檻
 
 ANON = re.compile(r"知情人士|消息人士|人士透露|人士指出|據傳|據了解|據悉|爆料|驚爆|踢爆|網傳|內幕|不具名|匿名|高層透露|私下透露|放話|傳將|傳已|傳遭|盛傳")
-EXCL = re.compile(r"獨家")
+EXCL = re.compile(r"獨家|^獨／")
 CJK = re.compile(r"[一-鿿]+")
 LATIN = re.compile(r"[A-Za-z][A-Za-z0-9\-]+|\d{2,}")
 STOP = set("快訊 獨家 最新 曝光 回應 表示 今天 今日 明天 網友 懶人包 一次看 直播 影片 更新 不斷更新 記者 報導 指出 強調 喊話 怒批 痛批 發聲".split())
 LEAN_NAME = {"green": "偏綠", "blue": "偏藍"}
 
 
+JUNK = re.compile(r"相關報導$|^影音$")
+SUFFIX = re.compile(r"\s*(?:[|｜]\s*#.*|[|｜]\s*[^|｜]{0,20}(?:新聞|報導|頻道|NEWS)[^|｜]{0,24}|@\w+|[-－–—]\s*(?:娛樂|政治|社會|生活|國際|財經|體育|地方|兩岸|要聞|即時|新聞|健康|科技|旅遊|房產|股市|運動|影劇|全球|產經)\S{0,4})\s*$", re.I)
+
+
+def tidy(title):
+    """去掉媒體自己加的尾巴（頻道名、分類名）；回傳 None 表示這則不是新聞標題。"""
+    for _ in range(3):
+        new = SUFFIX.sub("", title).strip()
+        if new == title:
+            break
+        title = new
+    return None if JUNK.search(title) or len(title) < 6 else title
+
+
+PREFIX = re.compile(r"^(?:[(（【\[][^)）】\]]{1,6}[)）】\]]\s*)?(?:[^\s／/》]{1,8}[／》]\s*)?(?:[\u4e00-\u9fff]{2,4}觀點[：:]\s*)?")
+
+
 def runs(title):
-    return CJK.findall(title)
+    """分析時略過「NBA／」「快訊／」「（影）」「某某觀點：」這類欄目前綴，避免同欄目的文章被當成同一議題。"""
+    return CJK.findall(PREFIX.sub("", title, count=1))
 
 
 def tokens(title):
     out = []
     for r in runs(title):
         out.extend(r[i:i + 2] for i in range(len(r) - 1))
-    out.extend(w.lower() for w in LATIN.findall(title))
+    out.extend(w.lower() for w in LATIN.findall(PREFIX.sub("", title, count=1)))
     return out
 
 
@@ -256,7 +274,11 @@ def load_history(date, days=6):
 
 def analyze(date):
     raw = json.loads((DATA / "raw" / f"{date}.json").read_text(encoding="utf-8"))
-    items = raw["items"]
+    items = []
+    for it in raw["items"]:
+        t = tidy(it["title"])
+        if t:
+            items.append({**it, "title": t})
     cfg = raw.get("sources") or json.loads((ROOT / "pipeline" / "sources.json").read_text(encoding="utf-8"))["sources"]
     src_meta = {s["id"]: s for s in cfg}
     n = len(items)

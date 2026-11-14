@@ -19,7 +19,7 @@
 ## 上線步驟
 
 1. 合併到 `main`。
-2. Settings → Pages → Source 選 **GitHub Actions**。
+2. Settings → Pages → Source 選 **Deploy from a branch**，Branch 選 **gh-pages**（第一次排程跑完後才會出現）。
 3. Actions → **Update data and deploy** → Run workflow，看 log 裡每家媒體是否抓得到。
 4. （選用）Settings → Secrets and variables → Actions 新增 secret `ANTHROPIC_API_KEY` 啟用 AI 註解；可用 variable `AI_MODEL`、`AI_EVERY_HOURS` 調整。
 
