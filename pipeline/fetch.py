@@ -27,10 +27,18 @@ def gnews_url(site):
     return f"https://news.google.com/rss/search?q={q}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
 
 
+MAX_BYTES = 5 * 1024 * 1024  # 單一 feed 上限 5 MB，避免異常回應吃光記憶體
+
+
 def http_get(url, timeout=25):
+    if not url.lower().startswith(("https://", "http://")):
+        raise ValueError("只允許 http(s) 來源")
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/rss+xml, application/xml, text/xml, */*"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
+        data = r.read(MAX_BYTES + 1)
+    if len(data) > MAX_BYTES:
+        raise ValueError("回應超過大小上限")
+    return data
 
 
 def local(tag):

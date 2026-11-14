@@ -23,6 +23,7 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       REMOTE: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
     steps:
