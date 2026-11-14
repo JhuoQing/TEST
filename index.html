@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>台灣輿情觀測｜每日新聞標題熱度</title>
+<meta name="description" content="每天彙整國內各大媒體新聞標題，分析今日討論熱度、各媒體著重議題與報導分布異常訊號。">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="viz-root">
+  <header class="top">
+    <div class="brand">
+      <p class="eyebrow">每日新聞標題分析</p>
+      <h1>台灣輿情觀測</h1>
+    </div>
+    <div class="datebar">
+      <button id="prev" type="button" aria-label="前一天">‹</button>
+      <select id="date" aria-label="選擇日期"></select>
+      <button id="next" type="button" aria-label="後一天">›</button>
+    </div>
+    <p class="updated" id="updated"></p>
+  </header>
+
+  <div id="demo" class="banner" hidden>
+    <strong>示範資料</strong>　目前顯示的媒體與標題皆為虛構，用來預覽版面。排程開始抓取真實 RSS 後會自動換成當日資料。
+  </div>
+
+  <main id="app" aria-live="polite"><p class="loading">載入中…</p></main>
+
+  <footer class="foot">
+    <p><strong>怎麼算的</strong>　只分析新聞標題。相似標題自動歸為同一議題；熱度＝報導則數 ×（1＋ln 報導媒體數），以當日最高者為 100。</p>
+    <p><strong>怎麼讀訊號</strong>　訊號只代表報導分布或用語「不尋常」，不等於有人刻意放話；突發事件、獨家採訪、媒體專長領域都會造成同樣的形狀。請點進議題看原始標題再判斷。</p>
+    <p id="health"></p>
+  </footer>
+</div>
+
+<div id="sheet" class="sheet" hidden>
+  <div class="sheet-bg" data-close></div>
+  <section class="sheet-body" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <button class="close" type="button" data-close aria-label="關閉">✕</button>
+    <div id="sheet-content"></div>
+  </section>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>
