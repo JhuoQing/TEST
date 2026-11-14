@@ -22,10 +22,8 @@
     <p class="updated" id="updated"></p>
   </header>
 
-  <div class="ticker" id="ticker" aria-hidden="true" hidden><div></div></div>
-
   <div id="demo" class="banner" hidden>
-    <strong>示範資料</strong>　目前顯示的媒體與標題皆為虛構，用來預覽版面。排程開始抓取真實 RSS 後會自動換成當日資料。
+    <strong>示範資料</strong>　目前顯示的媒體與標題皆為虛構，用來預覽版面。
   </div>
 
   <main id="app" aria-live="polite"><p class="loading">載入中…</p></main>
@@ -40,8 +38,8 @@
 <div id="sheet" class="sheet" hidden>
   <div class="sheet-bg" data-close></div>
   <section class="sheet-body" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
-    <button class="close" type="button" data-close aria-label="關閉">✕</button>
-    <div id="sheet-content"></div>
+    <div class="sheet-bar"><span>議題明細</span><button class="close" type="button" data-close aria-label="關閉">✕</button></div>
+    <div class="sheet-scroll" id="sheet-content"></div>
   </section>
 </div>
 <script src="assets/app.js"></script>

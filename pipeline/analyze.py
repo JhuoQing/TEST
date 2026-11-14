@@ -202,6 +202,21 @@ def parse_t(s):
     return datetime.fromisoformat(s)
 
 
+def pick_digest(g, vecs, full, items, k=3):
+    """挑 2–3 則最能代表議題、且彼此角度不同（內容不重複、盡量不同媒體）的標題，當作「新聞在講什麼」。"""
+    cand = [i for i in sorted(g, key=lambda i: -cos(vecs[i], full))[:30] if len(items[i]["title"]) >= 8]
+    chosen = []
+    while len(chosen) < k and cand:
+        def score(i):
+            red = max((cos(vecs[i], vecs[j]) for j in chosen), default=0.0)
+            same = sum(1 for j in chosen if items[j]["source"] == items[i]["source"])
+            return cos(vecs[i], full) - 0.8 * red - 0.15 * same
+        best = max(cand, key=score)
+        cand.remove(best)
+        chosen.append(best)
+    return [{"s": items[i]["source"], "t": items[i]["title"]} for i in chosen]
+
+
 def find_signals(idx, items, src_meta, base_share, lean_base):
     size = len(idx)
     sig = []
@@ -358,6 +373,8 @@ def analyze(date):
             "heat": round(100 * heat / max_heat), "share": round(share, 4),
             "status": status, "days": days_running,
             "trend": list(reversed(trend)) + [{"date": date, "share": round(share, 4)}],
+            "digest": pick_digest(g, vecs, full, items),
+            "first": items[order[0]]["time"][11:16], "peak": hours.index(max(hours)),
             "by_source": dict(by_src), "hours": hours, "signals": signals,
             "headlines": [{"s": items[i]["source"], "t": items[i]["title"], "l": items[i]["link"], "h": items[i]["time"][11:16]}
                           for i in order[:MAX_HEADLINES]],
