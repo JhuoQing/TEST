@@ -8,6 +8,8 @@
 import json
 import re
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -39,6 +41,24 @@ def http_get(url, timeout=25):
     if len(data) > MAX_BYTES:
         raise ValueError("回應超過大小上限")
     return data
+
+
+def get_feed(url, is_gnews, state):
+    """Google News 連續查詢會被限流（HTTP 429）：每次查詢間隔 3 秒，被擋就等 20 秒再試一次。"""
+    if is_gnews:
+        wait = 3 - (time.time() - state.get("last", 0))
+        if wait > 0:
+            time.sleep(wait)
+    try:
+        return http_get(url)
+    except urllib.error.HTTPError as e:
+        if not (is_gnews and e.code == 429):
+            raise
+        time.sleep(20)
+        return http_get(url)
+    finally:
+        if is_gnews:
+            state["last"] = time.time()
 
 
 def local(tag):
@@ -107,6 +127,7 @@ def fetch_all(now=None):
     seen = {(it["source"], norm_key(it["title"])) for it in day["items"]}
     health = {"checked_at": now.isoformat(timespec="seconds"), "sources": []}
     added_total = 0
+    gstate = {}
 
     for src in cfg["sources"]:
         got, added, errors = 0, 0, []
@@ -114,7 +135,7 @@ def fetch_all(now=None):
             is_gnews = feed["type"] == "gnews"
             url = gnews_url(feed["site"]) if is_gnews else feed["url"]
             try:
-                entries = parse_feed(http_get(url))
+                entries = parse_feed(get_feed(url, is_gnews, gstate))
             except Exception as e:  # 單一 feed 失敗就記錄後繼續
                 errors.append(f"{url}: {type(e).__name__}: {e}"[:200])
                 continue
