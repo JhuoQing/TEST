@@ -30,14 +30,16 @@
 - **60 秒導讀**：首頁最上方，三件事的白話說明。
 - **同一件事，幾種說法**：前幾大議題的 2–3 種報導切角，各附原始標題。
 
-步驟：
+步驟（Claude 或 Gemini 擇一）：
 
-1. 到 Claude Console（platform.claude.com）註冊，在 Billing 購買額度，再到 API keys 建立金鑰（`sk-ant-` 開頭，只會顯示一次）。
-2. 本 repo → Settings → Secrets and variables → Actions → New repository secret，Name 填 `ANTHROPIC_API_KEY`，Secret 貼上金鑰。
+1. 取得金鑰：
+   - **Gemini**：到 Google AI Studio（aistudio.google.com）建立 API key。Secret 名稱用 `GEMINI_API_KEY`。
+   - **Claude**：到 Claude Console（platform.claude.com）在 Billing 購買額度，再到 API keys 建立金鑰。Secret 名稱用 `ANTHROPIC_API_KEY`。
+2. 本 repo → Settings → Secrets and variables → Actions → New repository secret，填入上面的名稱與金鑰。
 3. Actions → Update data and deploy → Run workflow，勾選「這次強制執行 AI 註解」。
-4. 看執行紀錄裡 `[ai]` 開頭的幾行，會顯示合併了幾組、註解了幾個議題與 token 用量。
+4. 看執行紀錄裡 `[ai]` 開頭的幾行，會顯示使用哪一家、合併了幾組、註解了幾個議題與 token 用量。
 
-可調整的 repository variables（同一頁的 Variables 分頁）：`AI_MODEL`（預設 `claude-haiku-5-5`）、`AI_HOURS`（預設 `8,13,21`）。
+可調整的 repository variables（同一頁的 Variables 分頁）：`AI_PROVIDER`（`claude` 或 `gemini`，兩把金鑰都設時用來指定）、`AI_MODEL`（預設 `claude-haiku-5-5` 或 `gemini-3.8-flash`）、`AI_HOURS`（預設 `8,13,21`）。
 金鑰只放在 Secrets，不要寫進程式碼或貼到任何對話裡。
 
 真實資料存放在 `data` 分支（永遠只有一個 commit），`main` 上的 `data/` 只是示範資料。

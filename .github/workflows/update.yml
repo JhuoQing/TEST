@@ -48,6 +48,8 @@ jobs:
       - name: Fetch, analyze, annotate
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          AI_PROVIDER: ${{ vars.AI_PROVIDER }}
           AI_MODEL: ${{ vars.AI_MODEL }}
           AI_HOURS: ${{ vars.AI_HOURS }}
         run: |

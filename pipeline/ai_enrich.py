@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-"""（選用）Claude API 加值：語意合併、60 秒導讀、同一件事的幾種說法。
+"""（選用）AI 加值：語意合併、60 秒導讀、同一件事的幾種說法。支援 Claude 與 Gemini。
 
-沒有設定 ANTHROPIC_API_KEY 時直接略過，網站仍以規則式結果運作。
+金鑰（設其中一個即可，放在 GitHub Actions 的 Secrets）：
+  ANTHROPIC_API_KEY → 使用 Claude（預設模型 claude-haiku-5-5）
+  GEMINI_API_KEY    → 使用 Gemini（預設模型 gemini-3.8-flash）
+兩個都設時預設用 Claude；可用變數 AI_PROVIDER=gemini 或 claude 指定，AI_MODEL 指定模型。
+都沒設定時直接略過，網站仍以規則式結果運作。
 
 成本控制：每小時排程不呼叫 AI；只在 AI_HOURS 指定的台北時間時段（預設 8,13,21）
 各執行一次，每次兩個請求：
@@ -25,7 +29,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import analyze  # noqa: E402
 
 TPE = timezone(timedelta(hours=8))
-MODEL = os.environ.get("AI_MODEL") or "claude-haiku-5-5"
+DEFAULT_MODEL = {"claude": "claude-haiku-5-5", "gemini": "gemini-3.8-flash"}
+KEY_ENV = {"claude": "ANTHROPIC_API_KEY", "gemini": "GEMINI_API_KEY"}
+
+
+def pick_provider():
+    """回傳 (provider, key)；沒有可用金鑰時回傳 (None, None)。"""
+    want = (os.environ.get("AI_PROVIDER") or "").strip().lower()
+    order = ([want] if want in KEY_ENV else []) + [p for p in ("claude", "gemini") if p != want]  # 指定的那家沒金鑰就用另一家
+    for p in order:
+        key = (os.environ.get(KEY_ENV[p]) or "").strip()
+        if key:
+            return p, key
+    return None, None
+
+
+PROVIDER, API_KEY = pick_provider()
+MODEL = (os.environ.get("AI_MODEL") or "").strip() or DEFAULT_MODEL.get(PROVIDER, "")
 AI_HOURS = sorted(int(h) for h in (os.environ.get("AI_HOURS") or "8,13,21").split(",") if h.strip())
 MIN_HEADLINES = 100   # 當天標題太少時先不呼叫
 MERGE_TOPICS = 30     # 語意合併檢查前幾大議題
@@ -53,18 +73,47 @@ SYSTEM_BRIEF = COMMON + """
 格式：{"briefing":{"lead":"…","items":[{"id":"t1","text":"…"}]},"topics":[{"id":"t1","title":"…","summary":"…","angles":[{"name":"…","desc":"…","headlines":[1,4]}]}]}"""
 
 
-def call_claude(system, prompt, key, max_tokens):
-    body = json.dumps({"model": MODEL, "max_tokens": max_tokens, "system": system,
-                       "messages": [{"role": "user", "content": prompt}]}).encode()
-    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=body, headers={
-        "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"})
+def post_json(url, headers, body):
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={**headers, "content-type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=180) as r:
-            res = json.loads(r.read())
+            return json.loads(r.read())
     except urllib.error.HTTPError as e:  # 把 API 的錯誤訊息印出來，方便從 Actions 紀錄判斷原因
         raise RuntimeError(f"HTTP {e.code}: {e.read().decode('utf-8', 'replace')[:300]}") from None
+
+
+def parse_json(text):
+    return json.loads(text[text.index("{"):text.rindex("}") + 1])
+
+
+def call_claude(system, prompt, key, max_tokens):
+    res = post_json("https://api.anthropic.com/v1/messages",
+                    {"x-api-key": key, "anthropic-version": "2023-06-01"},
+                    {"model": MODEL, "max_tokens": max_tokens, "system": system,
+                     "messages": [{"role": "user", "content": prompt}]})
     text = "".join(b.get("text", "") for b in res.get("content", []) if b.get("type") == "text")
-    return json.loads(text[text.index("{"):text.rindex("}") + 1]), res.get("usage", {})
+    u = res.get("usage", {})
+    return parse_json(text), {"input_tokens": u.get("input_tokens", 0), "output_tokens": u.get("output_tokens", 0)}
+
+
+def call_gemini(system, prompt, key, max_tokens):
+    # Gemini 預設會先「思考」，思考也算輸出 token，所以上限給寬一點；金鑰放在標頭，不放在網址裡
+    res = post_json(f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent",
+                    {"x-goog-api-key": key},
+                    {"system_instruction": {"parts": [{"text": system}]},
+                     "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+                     "generationConfig": {"responseMimeType": "application/json", "maxOutputTokens": max_tokens * 3}})
+    cand = (res.get("candidates") or [{}])[0]
+    text = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts", []) if not p.get("thought"))
+    if not text:
+        raise RuntimeError(f"Gemini 沒有回傳內容（finishReason={cand.get('finishReason')}，{str(res.get('promptFeedback'))[:120]}）")
+    u = res.get("usageMetadata", {})
+    out = (u.get("candidatesTokenCount", 0) or 0) + (u.get("thoughtsTokenCount", 0) or 0)
+    return parse_json(text), {"input_tokens": u.get("promptTokenCount", 0) or 0, "output_tokens": out}
+
+
+def call_ai(system, prompt, max_tokens):
+    return (call_gemini if PROVIDER == "gemini" else call_claude)(system, prompt, API_KEY, max_tokens)
 
 
 def sample(headlines, k):
@@ -172,9 +221,8 @@ def due_slot(now, done):
 
 
 def enrich(date, force=False):
-    key = os.environ.get("ANTHROPIC_API_KEY")
-    if not key:
-        print("[ai] 未設定 ANTHROPIC_API_KEY，略過（使用規則式結果）")
+    if not PROVIDER:
+        print("[ai] 未設定 ANTHROPIC_API_KEY 或 GEMINI_API_KEY，略過（使用規則式結果）")
         return
     now = datetime.now(TPE)
     path = analyze.DATA / "daily" / f"{date}.json"
@@ -199,7 +247,7 @@ def enrich(date, force=False):
 
     # A. 語意合併
     try:
-        result, u = call_claude(SYSTEM_MERGE, merge_prompt(day), key, 800)
+        result, u = call_ai(SYSTEM_MERGE, merge_prompt(day), 800)
         add(u)
         groups = valid_merges(result, day)
         if groups:
@@ -213,7 +261,7 @@ def enrich(date, force=False):
     # B. 導讀與切角
     try:
         prompt, samples = brief_prompt(day)
-        result, u = call_claude(SYSTEM_BRIEF, prompt, key, 7000)
+        result, u = call_ai(SYSTEM_BRIEF, prompt, 7000)
         add(u)
         done = apply_brief(day, result, samples)
         print(f"[ai] 導讀與切角：已註解 {done} 個議題，導讀 {'有' if day.get('ai_brief') else '無'}")
@@ -226,10 +274,10 @@ def enrich(date, force=False):
     total = dict(meta.get("usage_today") or {"input_tokens": 0, "output_tokens": 0})
     for k in usage:
         total[k] = total.get(k, 0) + usage[k]
-    day["ai_meta"] = {"model": MODEL, "at": now.isoformat(timespec="minutes") if done else meta.get("at"),
+    day["ai_meta"] = {"provider": PROVIDER, "model": MODEL, "at": now.isoformat(timespec="minutes") if done else meta.get("at"),
                       "slots": slots, "usage_last": usage, "usage_today": total}
     path.write_text(json.dumps(day, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    print(f"[ai] {date}: 模型 {MODEL}，本次用量 {usage}，今日累計 {total}")
+    print(f"[ai] {date}: {PROVIDER} / {MODEL}，本次用量 {usage}，今日累計 {total}")
 
 
 if __name__ == "__main__":
