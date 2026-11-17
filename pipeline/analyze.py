@@ -86,6 +86,28 @@ def apply_merges(groups, items, date):
     return [sorted(g) for g in merged.values()]
 
 
+SEG = re.compile(r"\s*[-－–—|｜]\s*([^-－–—|｜]{0,14})$")
+
+
+def strip_boilerplate(items):
+    """同一媒體當天有 3 則以上標題用同樣的結尾（「- 上市櫃」「| 全球財經」這類欄目名），就把那段結尾去掉。"""
+    def tail(t):
+        m = SEG.search(t)
+        return m.group(1).strip() if m else None
+    for _ in range(3):
+        count = Counter((it["source"], tail(it["title"])) for it in items)
+        changed = False
+        for it in items:
+            tl = tail(it["title"])
+            if tl is not None and count[(it["source"], tl)] >= 3:
+                new = SEG.sub("", it["title"]).strip()
+                if len(new) >= 6:
+                    it["title"], changed = new, True
+        if not changed:
+            break
+    return items
+
+
 def runs(title):
     """分析時略過「NBA／」「快訊／」「（影）」「某某觀點：」這類欄目前綴，避免同欄目的文章被當成同一議題。"""
     return CJK.findall(PREFIX.sub("", title, count=1))
@@ -325,6 +347,7 @@ def analyze(date):
         t = tidy(it["title"])
         if t:
             items.append({**it, "title": t})
+    items = strip_boilerplate(items)
     cfg = raw.get("sources") or json.loads((ROOT / "pipeline" / "sources.json").read_text(encoding="utf-8"))["sources"]
     src_meta = {s["id"]: s for s in cfg}
     n = len(items)

@@ -59,8 +59,8 @@ COMMON = f"""你是台灣新聞標題分析助手。{GUARD}
 
 SYSTEM_MERGE = COMMON + """
 任務：下面每個議題是程式依字面相似度分出來的一群標題。請找出「其實在報導同一事件」卻被拆開的議題。
-判斷標準要嚴格：必須是同一事件（同一場活動、同一起事故、同一則消息的後續），只是用詞不同。
-只是同一個人物、同一類型（例如都是車禍、都是選舉）、同一個地點，都不算同一事件。沒有把握就不要合併。
+要合併的情況：同一事件只是用詞不同；或同一事件的不同面向與直接後續（例如「某人辭職」與「該辭職造成的股市反應」、「冷氣團預報」與「氣象專家談同一波冷空氣」）。
+不要合併的情況：只是同一個人物但不同的事、同一類型（例如都是車禍、都是財報、都是選舉但不同縣市或不同爭議）、同一個地點。沒有把握就不要合併。
 格式：{"merge":[["t3","t9"],["t5","t12","t20"]]}；沒有需要合併的就輸出 {"merge":[]}。"""
 
 SYSTEM_BRIEF = COMMON + """
@@ -69,8 +69,9 @@ SYSTEM_BRIEF = COMMON + """
 2. topics：每個議題一筆。
    - title：客觀的事件名稱（16 字內），不用情緒性動詞（如怒批、痛轟、慘、爆），不用驚嘆號。
    - summary：依標題歸納發生什麼事（70 字內）。
+   - single_event：這批標題是否都在講同一件事。若只是因為用詞相似（例如同一個地名、「女子」「送醫」這類常見詞、同一個媒體欄目）而被湊在一起的多件不相干的事，填 false；否則填 true。
    - angles：這批標題呈現的 2 到 3 種不同報導切角。每種切角有 name（10 字內）、desc（35 字內，說明這類標題聚焦什麼），以及 headlines（屬於這個切角的標題編號，至少 1 個，最多 4 個）。如果標題的角度都差不多，就輸出空陣列 []，不要硬湊。
-格式：{"briefing":{"lead":"…","items":[{"id":"t1","text":"…"}]},"topics":[{"id":"t1","title":"…","summary":"…","angles":[{"name":"…","desc":"…","headlines":[1,4]}]}]}"""
+格式：{"briefing":{"lead":"…","items":[{"id":"t1","text":"…"}]},"topics":[{"id":"t1","title":"…","summary":"…","single_event":true,"angles":[{"name":"…","desc":"…","headlines":[1,4]}]}]}"""
 
 
 def post_json(url, headers, body):
@@ -198,7 +199,8 @@ def apply_brief(day, result, samples):
             if name and desc and hs:
                 angles.append({"name": name, "desc": desc, "headlines": [{"s": h["s"], "t": h["t"]} for h in hs]})
         ai = {"title": clip(a.get("title"), 22), "summary": clip(a.get("summary"), 100),
-              "angles": angles[:3] if len(angles) >= 2 else []}
+              "angles": angles[:3] if len(angles) >= 2 else [],
+              "mixed": a.get("single_event") is False}
         if ai["title"] or ai["summary"]:
             t["ai"] = ai
             done += 1
@@ -240,6 +242,7 @@ def enrich(date, force=False):
             print(f"[ai] 不在排定時段 {AI_HOURS}（今日已完成 {slots}），沿用上次結果")
             return
     usage = {"input_tokens": 0, "output_tokens": 0}
+    errors, merged = [], None  # 錯誤也寫進資料檔，不用翻 Actions 紀錄就能診斷
 
     def add(u):
         for k in usage:
@@ -247,15 +250,17 @@ def enrich(date, force=False):
 
     # A. 語意合併
     try:
-        result, u = call_ai(SYSTEM_MERGE, merge_prompt(day), 800)
+        result, u = call_ai(SYSTEM_MERGE, merge_prompt(day), 4000)
         add(u)
         groups = valid_merges(result, day)
+        merged = len(groups)
         if groups:
             save_merges(date, day, groups)
             analyze.analyze(date)  # 套用合併後重算熱度與排名
             day = json.loads(path.read_text(encoding="utf-8"))
         print(f"[ai] 語意合併：{len(groups)} 組 {groups}")
     except Exception as e:
+        errors.append(f"merge: {type(e).__name__}: {e}"[:300])
         print(f"[ai] 語意合併失敗，略過這一步：{type(e).__name__}: {e}")
 
     # B. 導讀與切角
@@ -266,6 +271,7 @@ def enrich(date, force=False):
         done = apply_brief(day, result, samples)
         print(f"[ai] 導讀與切角：已註解 {done} 個議題，導讀 {'有' if day.get('ai_brief') else '無'}")
     except Exception as e:
+        errors.append(f"brief: {type(e).__name__}: {e}"[:300])
         print(f"[ai] 導讀與切角失敗，保留既有結果：{type(e).__name__}: {e}")
         done = 0
 
@@ -275,7 +281,7 @@ def enrich(date, force=False):
     for k in usage:
         total[k] = total.get(k, 0) + usage[k]
     day["ai_meta"] = {"provider": PROVIDER, "model": MODEL, "at": now.isoformat(timespec="minutes") if done else meta.get("at"),
-                      "slots": slots, "usage_last": usage, "usage_today": total}
+                      "slots": slots, "merged_last": merged, "errors": errors, "usage_last": usage, "usage_today": total}
     path.write_text(json.dumps(day, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     print(f"[ai] {date}: {PROVIDER} / {MODEL}，本次用量 {usage}，今日累計 {total}")
 

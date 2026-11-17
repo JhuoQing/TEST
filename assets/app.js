@@ -131,10 +131,14 @@
     return t.size + ' 則・' + t.n_sources + ' 家媒體・佔版面 ' + pct(t.share) + (t.first ? '・' + t.first + ' 起' : '');
   }
 
+  /* AI 判定為「多件不相干的事被湊在一起」的群，不放進前五大與熱力表，改列在其他議題並標示 */
+  function isMixed(t) { return !!(t.ai && t.ai.mixed); }
+  function mainTopics(d) { return d.topics.filter(function (t) { return !isMixed(t); }); }
+
   function topCards(d) {
     var el = block('前五大主題', '今天最多媒體在報的五件事。每則下方列出角度不同的代表標題，點「看詳細」可看全部標題與趨勢。');
     var wrap = h('div', { class: 'cards' });
-    d.topics.slice(0, 5).forEach(function (t, i) {
+    mainTopics(d).slice(0, 5).forEach(function (t, i) {
       var chips = h('div', { class: 'chips' });
       if (STATUS[t.status]) chips.appendChild(h('span', { class: 'chip', text: STATUS[t.status] }));
       var flags = t.signals.filter(function (x) { return x.level !== 'low'; }).length;
@@ -142,7 +146,7 @@
       if (t.days > 1) chips.appendChild(h('span', { class: 'chip', text: '連續 ' + t.days + ' 天' }));
       var bar = h('div', { class: 'heatbar', title: '熱度指數' }, setWidth(h('i'), t.heat * 0.7), h('b', { text: String(t.heat) }));
       wrap.appendChild(h('article', { class: 'card' + (i === 0 ? ' first' : '') },
-        h('div', { class: 'head' }, h('div', { class: 'badge', text: String(t.rank) }),
+        h('div', { class: 'head' }, h('div', { class: 'badge', text: String(i + 1) }),
           h('div', null, h('h3', { text: title(t) }), chips.children.length ? chips : null)),
         whatBox(t),
         anglesBox(t, 1),
@@ -175,14 +179,15 @@
   }
 
   function others(d) {
-    var rest = d.topics.slice(5);
+    var top = mainTopics(d).slice(0, 5);
+    var rest = d.topics.filter(function (t) { return top.indexOf(t) < 0; });
     if (!rest.length) return null;
-    var el = block('其他熱門議題', '第 6 名之後。條越長代表熱度越高。');
+    var el = block('其他熱門議題', '前五大以外的議題。條越長代表熱度越高；標「綜合」的是多則不相干新聞被歸在一起。');
     var list = h('ol', { class: 'rank' });
     (state.showAll ? rest : rest.slice(0, 10)).forEach(function (t) {
       list.appendChild(h('li', null, h('button', { type: 'button', on: { click: function () { openTopic(t); } } },
         h('span', { class: 'no', text: String(t.rank) }),
-        h('span', { class: 'name', text: title(t) }),
+        h('span', { class: 'name' }, title(t), isMixed(t) ? h('span', { class: 'chip', style: 'margin-left:6px', text: '綜合' }) : null),
         h('span', { class: 'meta', text: t.size + ' 則・' + t.n_sources + ' 家' }),
         setWidth(h('span', { class: 'bar' }), t.heat))));
     });
@@ -204,7 +209,7 @@
   function coverage(d) {
     var el = block('各媒體把版面給了誰', '每格是該媒體今日標題中，有多少比例在報這個議題。橫向比較可看出誰重押、誰冷處理。');
     var srcs = d.sources.filter(function (x) { return x.count >= 5; });
-    var topics = d.topics.slice(0, 10), max = 0;
+    var topics = mainTopics(d).slice(0, 10), max = 0;
     topics.forEach(function (t) { srcs.forEach(function (x) { max = Math.max(max, (t.by_source[x.id] || 0) / x.count); }); });
     var head = h('tr', null, h('th', { text: '' }));
     srcs.forEach(function (x) {
