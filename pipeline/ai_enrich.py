@@ -8,8 +8,13 @@
 AI_MODEL 指定輕量工作的模型，AI_MODEL_WRITER 指定寫報告的模型。
 都沒設定時直接略過，網站仍以規則式結果運作。
 
-成本控制：每小時排程不呼叫 AI；只在 AI_HOURS 指定的台北時間時段（預設 8,13,21）
-各執行一次，每次兩個請求：
+成本控制（避免浪費 token）：
+  - 只有「排程」和「手動執行」會呼叫 AI；推送程式碼（push）只重新抓標題、部署網站，絕不呼叫 AI。
+  - 只在 AI_HOURS 指定的台北時間時段（預設 8,13,21）各執行一次；同一時段最多嘗試 MAX_ATTEMPTS 次，
+    失敗也不會每半小時一直重試。
+  - 每一步都記住上次的輸入指紋：熱門議題的標題與上次幾乎相同（重疊 ≥ SAME_T）就沿用上次結果，不呼叫 AI。
+    手動執行時勾選「忽略快取」才會強制全部重跑。
+每個時段的步驟：
   A. 語意合併：看前 30 大議題的關鍵詞與代表標題，找出「其實是同一事件」的議題。
      結果存進 data/merges/<日期>.json，之後每小時的規則式分群都會套用。
   B. 導讀與切角：對前 15 大議題產生中立事件名稱、摘要、2–3 種報導切角，
@@ -19,6 +24,7 @@ AI_MODEL 指定輕量工作的模型，AI_MODEL_WRITER 指定寫報告的模型�
 
 所有輸出都經過格式檢查，不合格的欄位直接丟棄；AI 失敗不影響網站更新。
 """
+import hashlib
 import json
 import os
 import sys
@@ -57,6 +63,9 @@ AI_HOURS = sorted(int(h) for h in (os.environ.get("AI_HOURS") or "8,13,21").spli
 MIN_HEADLINES = 100   # 當天標題太少時先不呼叫
 MERGE_TOPICS = 30     # 語意合併檢查前幾大議題
 TOP_N, PER_TOPIC = 15, 14
+MAX_ATTEMPTS = 2      # 同一時段最多嘗試幾次（含失敗）
+SAME_T = 0.85         # 輸入指紋重疊達此比例 → 視為沒變，沿用上次結果
+TRIGGER = (os.environ.get("AI_TRIGGER") or "").strip()  # GitHub 事件名稱：schedule / workflow_dispatch / push
 
 GUARD = "你只能依據下方提供的標題字面資訊進行歸納、命名與分類，嚴禁根據背景知識推論、補充或編造標題未提及的事件細節與內文。"
 COMMON = f"""你是台灣新聞標題分析助手。{GUARD}
@@ -226,13 +235,31 @@ def apply_brief(day, result, samples):
 
 
 # ---- 主流程 ----------------------------------------------------------------
-def due_slot(now, done):
-    """回傳現在該補跑的時段（例如 13），沒有就回傳 None。排程延遲時仍會在同一時段內補上。"""
+def due_slot(now, done, attempts):
+    """回傳現在該補跑的時段（例如 13），沒有就回傳 None。排程延遲時仍會在同一時段內補上；
+    同一時段已嘗試 MAX_ATTEMPTS 次就放棄，等下一個時段。"""
     passed = [h for h in AI_HOURS if h <= now.hour]
-    return passed[-1] if passed and passed[-1] not in done else None
+    if not passed or passed[-1] in done or attempts.get(str(passed[-1]), 0) >= MAX_ATTEMPTS:
+        return None
+    return passed[-1]
 
 
-def enrich(date, force=False):
+def fingerprint(titles):
+    """把一組標題變成短雜湊集合，用來判斷這次的 AI 輸入跟上次是否幾乎一樣。"""
+    return sorted({hashlib.md5(analyze.title_key(t).encode()).hexdigest()[:8] for t in titles})
+
+
+def same(fp, old):
+    if not fp or not old:
+        return False
+    a, b = set(fp), set(old)
+    return len(a & b) / len(a | b) >= SAME_T
+
+
+def enrich(date, force=False, fresh=False):
+    if TRIGGER == "push":
+        print("[ai] 這次是推送程式碼觸發，只更新資料與網站，不呼叫 AI")
+        return
     if not PROVIDER:
         print("[ai] 未設定 ANTHROPIC_API_KEY 或 GEMINI_API_KEY，略過（使用規則式結果）")
         return
@@ -243,14 +270,18 @@ def enrich(date, force=False):
         return
     meta = day.get("ai_meta") or {}
     slots = list(meta.get("slots") or [])
-    slot = due_slot(now, slots)
+    attempts = dict(meta.get("attempts") or {})
+    fps = {} if fresh else dict(meta.get("fp") or {})
+    slot = due_slot(now, slots, attempts)
     if not force:
         if day["totals"]["headlines"] < MIN_HEADLINES:
             print("[ai] 今日標題還太少，先不呼叫")
             return
         if slot is None:
-            print(f"[ai] 不在排定時段 {AI_HOURS}（今日已完成 {slots}），沿用上次結果")
+            print(f"[ai] 不在排定時段 {AI_HOURS}（今日已完成 {slots}，嘗試次數 {attempts}），沿用上次結果")
             return
+    if slot is not None:
+        attempts[str(slot)] = attempts.get(str(slot), 0) + 1
     usage = {"input_tokens": 0, "output_tokens": 0}
     errors, merged = [], None  # 錯誤也寫進資料檔，不用翻 Actions 紀錄就能診斷
 
@@ -258,8 +289,14 @@ def enrich(date, force=False):
         for k in usage:
             usage[k] += int(u.get(k, 0) or 0)
 
+    skipped = []
+
     # A. 語意合併
+    fp_merge = fingerprint(d["t"] for t in day["topics"][:MERGE_TOPICS] for d in t.get("digest", [])[:3])
     try:
+        if same(fp_merge, fps.get("merge")):
+            skipped.append("merge")
+            raise StopIteration
         result, u = call_ai(SYSTEM_MERGE, merge_prompt(day), 4000)
         add(u)
         groups = valid_merges(result, day)
@@ -268,33 +305,50 @@ def enrich(date, force=False):
             save_merges(date, day, groups)
             analyze.analyze(date)  # 套用合併後重算熱度與排名
             day = json.loads(path.read_text(encoding="utf-8"))
+        fps["merge"] = fp_merge
         print(f"[ai] 語意合併：{len(groups)} 組 {groups}")
+    except StopIteration:
+        print("[ai] 語意合併：議題與上次幾乎相同，略過")
     except Exception as e:
         errors.append(f"merge: {type(e).__name__}: {e}"[:300])
         print(f"[ai] 語意合併失敗，略過這一步：{type(e).__name__}: {e}")
 
     # B. 導讀與切角
+    done = 0
     try:
         prompt, samples = brief_prompt(day)
-        result, u = call_ai(SYSTEM_BRIEF, prompt, 7000)
+        fp_brief = fingerprint(h["t"] for hs in samples.values() for h in hs)
+        if same(fp_brief, fps.get("brief")) and day.get("ai_brief"):
+            skipped.append("brief")
+            raise StopIteration
+        result, u = call_ai(SYSTEM_BRIEF, prompt, 16000)  # 15 個議題的輸出較長，上限太低會被截斷、白花 token
         add(u)
         done = apply_brief(day, result, samples)
+        fps["brief"] = fp_brief
         print(f"[ai] 導讀與切角：已註解 {done} 個議題，導讀 {'有' if day.get('ai_brief') else '無'}")
+    except StopIteration:
+        print("[ai] 導讀與切角：前幾大議題的標題與上次幾乎相同，略過")
     except Exception as e:
         errors.append(f"brief: {type(e).__name__}: {e}"[:300])
         print(f"[ai] 導讀與切角失敗，保留既有結果：{type(e).__name__}: {e}")
-        done = 0
 
     # C. 一分鐘輿情報告（讀內文 → 寫作 → 驗證）
     rep_note = None
     if DEEP:
         try:
-            rep, u, err = report.build(day, call_ai, WRITER_MODEL, MODEL)
+            fp_rep = fingerprint(h["t"] for t in report.pick_events(day)[:report.EVENTS] for h in t["headlines"])
+            if same(fp_rep, fps.get("report")) and day.get("ai_report"):
+                skipped.append("report")
+                rep, u, err = None, {}, None
+                print("[ai] 一分鐘報告：熱門事件與上次幾乎相同，沿用上一版")
+            else:
+                rep, u, err = report.build(day, call_ai, WRITER_MODEL, MODEL)
             add(u)
             if rep:
+                fps["report"] = fp_rep
                 day["ai_report"] = rep
                 rep_note = f"{len(rep['sections'])} 段、{rep['chars']} 字、驗證保留 {rep['verify']['kept']}/{rep['verify']['checked']} 句"
-            else:
+            elif err:
                 errors.append(f"report: {err}"[:300])
                 print(f"[ai] 一分鐘報告未更新（保留上一版）：{err}")
         except Exception as e:
@@ -302,17 +356,17 @@ def enrich(date, force=False):
             print(f"[ai] 一分鐘報告失敗，保留上一版：{type(e).__name__}: {e}")
         print(f"[ai] 一分鐘報告：{rep_note or '無更新'}")
 
-    if slot is not None and (done or rep_note):
+    if slot is not None and (done or rep_note or skipped):
         slots.append(slot)
     total = dict(meta.get("usage_today") or {"input_tokens": 0, "output_tokens": 0})
     for k in usage:
         total[k] = total.get(k, 0) + usage[k]
     day["ai_meta"] = {"provider": PROVIDER, "model": MODEL, "writer": WRITER_MODEL if DEEP else None, "report": rep_note, "at": now.isoformat(timespec="minutes") if done else meta.get("at"),
-                      "slots": slots, "merged_last": merged, "errors": errors, "usage_last": usage, "usage_today": total}
+                      "slots": slots, "attempts": attempts, "fp": fps, "skipped_last": skipped, "merged_last": merged, "errors": errors, "usage_last": usage, "usage_today": total}
     path.write_text(json.dumps(day, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     print(f"[ai] {date}: {PROVIDER} / {MODEL}（報告 {WRITER_MODEL if DEEP else '關閉'}），本次用量 {usage}，今日累計 {total}")
 
 
 if __name__ == "__main__":
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    enrich(args[0] if args else datetime.now(TPE).strftime("%Y-%m-%d"), force="--force" in sys.argv)
+    enrich(args[0] if args else datetime.now(TPE).strftime("%Y-%m-%d"), force="--force" in sys.argv, fresh="--fresh" in sys.argv)
