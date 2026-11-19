@@ -2,9 +2,10 @@
 """（選用）AI 加值：語意合併、60 秒導讀、同一件事的幾種說法。支援 Claude 與 Gemini。
 
 金鑰（設其中一個即可，放在 GitHub Actions 的 Secrets）：
-  ANTHROPIC_API_KEY → 使用 Claude（預設模型 claude-haiku-5-5）
+  ANTHROPIC_API_KEY → 使用 Claude（建議；輕量工作 claude-haiku-5-5，寫報告 claude-sonnet-5-5）
   GEMINI_API_KEY    → 使用 Gemini（預設模型 gemini-3.8-flash）
-兩個都設時預設用 Claude；可用變數 AI_PROVIDER=gemini 或 claude 指定，AI_MODEL 指定模型。
+兩個都設時預設用 Claude；可用變數 AI_PROVIDER=gemini 或 claude 指定，
+AI_MODEL 指定輕量工作的模型，AI_MODEL_WRITER 指定寫報告的模型。
 都沒設定時直接略過，網站仍以規則式結果運作。
 
 成本控制：每小時排程不呼叫 AI；只在 AI_HOURS 指定的台北時間時段（預設 8,13,21）
@@ -13,6 +14,8 @@
      結果存進 data/merges/<日期>.json，之後每小時的規則式分群都會套用。
   B. 導讀與切角：對前 15 大議題產生中立事件名稱、摘要、2–3 種報導切角，
      以及全站的 60 秒導讀。
+  C. 一分鐘輿情報告（report.py）：只對熱門事件抓新聞內文，寫成約一分鐘可讀完的文章，
+     每句附引用並逐句驗證。內文只在執行期間使用，不存檔、不上網站。AI_DEEP=0 可關閉。
 
 所有輸出都經過格式檢查，不合格的欄位直接丟棄；AI 失敗不影響網站更新。
 """
@@ -27,9 +30,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import analyze  # noqa: E402
+import report  # noqa: E402
 
 TPE = timezone(timedelta(hours=8))
 DEFAULT_MODEL = {"claude": "claude-haiku-5-5", "gemini": "gemini-3.8-flash"}
+DEFAULT_WRITER = {"claude": "claude-sonnet-5-5", "gemini": "gemini-3.8-flash"}
 KEY_ENV = {"claude": "ANTHROPIC_API_KEY", "gemini": "GEMINI_API_KEY"}
 
 
@@ -46,6 +51,8 @@ def pick_provider():
 
 PROVIDER, API_KEY = pick_provider()
 MODEL = (os.environ.get("AI_MODEL") or "").strip() or DEFAULT_MODEL.get(PROVIDER, "")
+WRITER_MODEL = (os.environ.get("AI_MODEL_WRITER") or "").strip() or DEFAULT_WRITER.get(PROVIDER, "")
+DEEP = (os.environ.get("AI_DEEP") or "1").strip() != "0"
 AI_HOURS = sorted(int(h) for h in (os.environ.get("AI_HOURS") or "8,13,21").split(",") if h.strip())
 MIN_HEADLINES = 100   # 當天標題太少時先不呼叫
 MERGE_TOPICS = 30     # 語意合併檢查前幾大議題
@@ -74,10 +81,10 @@ SYSTEM_BRIEF = COMMON + """
 格式：{"briefing":{"lead":"…","items":[{"id":"t1","text":"…"}]},"topics":[{"id":"t1","title":"…","summary":"…","single_event":true,"angles":[{"name":"…","desc":"…","headlines":[1,4]}]}]}"""
 
 
-def post_json(url, headers, body):
+def post_json(url, headers, body, timeout=180):
     req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={**headers, "content-type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=180) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read())
     except urllib.error.HTTPError as e:  # 把 API 的錯誤訊息印出來，方便從 Actions 紀錄判斷原因
         raise RuntimeError(f"HTTP {e.code}: {e.read().decode('utf-8', 'replace')[:300]}") from None
@@ -87,23 +94,25 @@ def parse_json(text):
     return json.loads(text[text.index("{"):text.rindex("}") + 1])
 
 
-def call_claude(system, prompt, key, max_tokens):
+def call_claude(system, prompt, key, max_tokens, model, timeout):
     res = post_json("https://api.anthropic.com/v1/messages",
                     {"x-api-key": key, "anthropic-version": "2023-06-01"},
-                    {"model": MODEL, "max_tokens": max_tokens, "system": system,
-                     "messages": [{"role": "user", "content": prompt}]})
+                    {"model": model, "max_tokens": max_tokens, "system": system,
+                     "messages": [{"role": "user", "content": prompt}]}, timeout)
+    if res.get("stop_reason") == "max_tokens":
+        raise RuntimeError("輸出超過 max_tokens，結果被截斷")
     text = "".join(b.get("text", "") for b in res.get("content", []) if b.get("type") == "text")
     u = res.get("usage", {})
     return parse_json(text), {"input_tokens": u.get("input_tokens", 0), "output_tokens": u.get("output_tokens", 0)}
 
 
-def call_gemini(system, prompt, key, max_tokens):
+def call_gemini(system, prompt, key, max_tokens, model, timeout):
     # Gemini 預設會先「思考」，思考也算輸出 token，所以上限給寬一點；金鑰放在標頭，不放在網址裡
-    res = post_json(f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent",
+    res = post_json(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                     {"x-goog-api-key": key},
                     {"system_instruction": {"parts": [{"text": system}]},
                      "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                     "generationConfig": {"responseMimeType": "application/json", "maxOutputTokens": max_tokens * 3}})
+                     "generationConfig": {"responseMimeType": "application/json", "maxOutputTokens": max_tokens * 3}}, timeout)
     cand = (res.get("candidates") or [{}])[0]
     text = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts", []) if not p.get("thought"))
     if not text:
@@ -113,8 +122,9 @@ def call_gemini(system, prompt, key, max_tokens):
     return parse_json(text), {"input_tokens": u.get("promptTokenCount", 0) or 0, "output_tokens": out}
 
 
-def call_ai(system, prompt, max_tokens):
-    return (call_gemini if PROVIDER == "gemini" else call_claude)(system, prompt, API_KEY, max_tokens)
+def call_ai(system, prompt, max_tokens, model=None, timeout=180):
+    """model 沒給就用輕量模型；寫報告時傳入 WRITER_MODEL。"""
+    return (call_gemini if PROVIDER == "gemini" else call_claude)(system, prompt, API_KEY, max_tokens, model or MODEL, timeout)
 
 
 def sample(headlines, k):
@@ -275,15 +285,32 @@ def enrich(date, force=False):
         print(f"[ai] 導讀與切角失敗，保留既有結果：{type(e).__name__}: {e}")
         done = 0
 
-    if slot is not None and done:
+    # C. 一分鐘輿情報告（讀內文 → 寫作 → 驗證）
+    rep_note = None
+    if DEEP:
+        try:
+            rep, u, err = report.build(day, call_ai, WRITER_MODEL, MODEL)
+            add(u)
+            if rep:
+                day["ai_report"] = rep
+                rep_note = f"{len(rep['sections'])} 段、{rep['chars']} 字、驗證保留 {rep['verify']['kept']}/{rep['verify']['checked']} 句"
+            else:
+                errors.append(f"report: {err}"[:300])
+                print(f"[ai] 一分鐘報告未更新（保留上一版）：{err}")
+        except Exception as e:
+            errors.append(f"report: {type(e).__name__}: {e}"[:300])
+            print(f"[ai] 一分鐘報告失敗，保留上一版：{type(e).__name__}: {e}")
+        print(f"[ai] 一分鐘報告：{rep_note or '無更新'}")
+
+    if slot is not None and (done or rep_note):
         slots.append(slot)
     total = dict(meta.get("usage_today") or {"input_tokens": 0, "output_tokens": 0})
     for k in usage:
         total[k] = total.get(k, 0) + usage[k]
-    day["ai_meta"] = {"provider": PROVIDER, "model": MODEL, "at": now.isoformat(timespec="minutes") if done else meta.get("at"),
+    day["ai_meta"] = {"provider": PROVIDER, "model": MODEL, "writer": WRITER_MODEL if DEEP else None, "report": rep_note, "at": now.isoformat(timespec="minutes") if done else meta.get("at"),
                       "slots": slots, "merged_last": merged, "errors": errors, "usage_last": usage, "usage_today": total}
     path.write_text(json.dumps(day, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    print(f"[ai] {date}: {PROVIDER} / {MODEL}，本次用量 {usage}，今日累計 {total}")
+    print(f"[ai] {date}: {PROVIDER} / {MODEL}（報告 {WRITER_MODEL if DEEP else '關閉'}），本次用量 {usage}，今日累計 {total}")
 
 
 if __name__ == "__main__":

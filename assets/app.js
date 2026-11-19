@@ -95,6 +95,60 @@
     return el;
   }
 
+  /* 一分鐘輿情報告：AI 讀過熱門事件的新聞內文後撰寫，每句附引用編號，連回原文 */
+  function cites(rep, list) {
+    var span = h('span', { class: 'cites' });
+    (list || []).forEach(function (n) {
+      var r = rep.refs[n - 1];
+      if (!r) return;
+      var safe = /^https?:\/\//i.test(r.l || '');
+      span.appendChild(safe ? h('a', { href: r.l, target: '_blank', rel: 'noopener noreferrer', title: srcName(r.s) + '：' + r.t, text: String(n) })
+                            : h('span', { text: String(n) }));
+    });
+    return span;
+  }
+
+  function reportBox(d) {
+    var rep = d.ai_report;
+    if (!rep || !rep.sections || !rep.sections.length) return null;
+    var el = h('section', { class: 'report' },
+      h('div', { class: 'brief-head' }, h('h2', { text: '一分鐘看懂今天' }),
+        h('span', { text: '約 ' + rep.seconds + ' 秒讀完・讀了 ' + rep.refs.length + ' 篇報導內文' })));
+    if (rep.lead) el.appendChild(h('p', { class: 'report-lead' }, rep.lead.text, cites(rep, rep.lead.cite)));
+    rep.sections.forEach(function (sec, i) {
+      var t = sec.topic ? d.topics.filter(function (k) { return k.id === sec.topic; })[0] : null;
+      var head = t ? h('button', { type: 'button', class: 'rhead', on: { click: function () { openTopic(t); } } }, h('span', { class: 'n', text: String(i + 1) }), sec.heading, h('small', { text: '看標題 ›' }))
+                   : h('div', { class: 'rhead' }, h('span', { class: 'n', text: String(i + 1) }), sec.heading);
+      var p = h('p', { class: 'rbody' });
+      sec.sentences.forEach(function (x) { p.appendChild(document.createTextNode(x.text)); p.appendChild(cites(rep, x.cite)); });
+      var art = h('article', { class: 'rsec' }, head, p);
+      if (sec.framing) art.appendChild(h('p', { class: 'rframe' }, h('b', { text: '各家怎麼報　' }), sec.framing.text, cites(rep, sec.framing.cite)));
+      (sec.signals || []).forEach(function (x) {
+        art.appendChild(h('p', { class: 'rsig' }, (x.type === 'copy' ? '📋 ' : '🕵️ ') + x.text));
+      });
+      el.appendChild(art);
+    });
+    var v = rep.verify || {};
+    var det = h('details', { class: 'refs' }, h('summary', { text: '引用來源與查核紀錄' }));
+    var ol = h('ol');
+    rep.refs.forEach(function (r) {
+      var safe = /^https?:\/\//i.test(r.l || '');
+      ol.appendChild(h('li', null, h('b', { text: srcName(r.s) + '　' }),
+        safe ? h('a', { href: r.l, target: '_blank', rel: 'noopener noreferrer', text: r.t }) : r.t));
+    });
+    det.appendChild(ol);
+    if (v.removed && v.removed.length) {
+      det.appendChild(h('p', { class: 'sub', text: '以下句子因查核不通過而刪除，不會出現在報告中：' }));
+      var ul = h('ul', { class: 'removed' });
+      v.removed.forEach(function (x) { ul.appendChild(h('li', null, h('s', { text: x.text }), h('small', { text: x.why }))); });
+      det.appendChild(ul);
+    }
+    el.appendChild(det);
+    el.appendChild(h('p', { class: 'ai-tag', text: '🤖 AI 依新聞內文撰寫・每句都對照引用原文查核（' + (v.kept || 0) + '/' + (v.checked || 0) + ' 句通過）・'
+      + (rep.at ? rep.at.slice(11, 16) + ' 更新・' : '') + '數字為引用編號，點擊開啟原文' }));
+    return el;
+  }
+
   /* 同一件事，幾種說法：AI 把標題歸成 2–3 種切角，每種附原始標題當證據 */
   function anglesBox(t, max) {
     var list = t.ai && t.ai.angles;
@@ -368,7 +422,7 @@
     document.getElementById('updated').textContent = '資料更新：' + d.updated_at.replace('T', ' ').slice(0, 16) + '（台北時間）';
     if (!d.topics.length) { app.appendChild(h('p', { class: 'empty', text: '這一天的標題還不夠多，無法歸納議題。' })); return; }
     app.appendChild(stats(d));
-    var br = briefing(d); if (br) app.appendChild(br);
+    var br = reportBox(d) || briefing(d); if (br) app.appendChild(br);  // 有一分鐘報告就取代 60 秒導讀
     [topCards, signals, others, coverage, keywords, similarity].forEach(function (f) { var el = f(d); if (el) app.appendChild(el); });
   }
 

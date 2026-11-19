@@ -199,3 +199,28 @@ svg .val { fill: var(--text); font-weight: 900; font-size: 12px; }
 .foot { margin-top: 48px; padding: 16px; border: 2px solid var(--edge); border-radius: 18px; background: var(--card); font-size: 12.5px; color: var(--text-2); display: grid; gap: 8px; }
 .foot strong { color: var(--text); }
 .what .ai-tag { font-size: 11px; line-height: 1.4; }
+
+/* 一分鐘看懂今天 */
+.report { margin-top: 20px; padding: 16px; border: 2px solid var(--edge); border-radius: 20px; background: var(--lime); color: #17131f; }
+.report-lead { font-size: 16.5px; font-weight: 800; line-height: 1.55; margin-top: 8px; }
+.rsec { margin-top: 12px; padding: 12px 14px; background: #fff; border: 2px solid #17131f; border-radius: 14px; }
+.rhead { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: 0; padding: 0; color: #17131f; font: inherit; font-size: 16px; font-weight: 900; }
+button.rhead { cursor: pointer; }
+.rhead small { margin-left: auto; font-size: 11.5px; font-weight: 700; color: #564f63; white-space: nowrap; }
+button.rhead:hover small, button.rhead:focus-visible small { color: #ff3d7f; }
+.rhead .n { flex: 0 0 28px; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: #17131f; color: #fff; font-size: 13px; }
+.rbody { font-size: 15px; line-height: 1.75; margin-top: 8px; }
+.rframe { font-size: 14px; line-height: 1.65; margin-top: 8px; padding: 8px 10px; background: #fff0d4; border-radius: 10px; }
+.rframe b { font-weight: 900; }
+.rsig { font-size: 12.5px; line-height: 1.5; margin-top: 6px; color: #564f63; font-weight: 600; }
+.cites { white-space: nowrap; }
+.cites a, .cites span { display: inline-block; min-width: 1.5em; margin-left: 2px; padding: 0 4px; font-size: 10.5px; line-height: 1.6; font-weight: 800; vertical-align: super; text-align: center; color: #17131f; background: #c8ff3d; border: 1.5px solid #17131f; border-radius: 99px; text-decoration: none; }
+.cites a:hover, .cites a:focus-visible { background: #ff3d7f; outline: none; }
+.refs { margin-top: 12px; font-size: 13px; }
+.refs summary { cursor: pointer; font-weight: 800; }
+.refs ol { margin: 8px 0 0; padding-left: 1.8em; display: grid; gap: 4px; }
+.refs a { color: inherit; text-decoration-thickness: 1.5px; text-underline-offset: 2px; }
+.refs .sub { color: #564f63; margin: 10px 0 4px; }
+.removed { margin: 0; padding-left: 1.2em; color: #564f63; }
+.removed s { text-decoration-color: rgba(23,19,31,.4); }
+.removed small { display: block; font-weight: 700; font-size: 11.5px; }
