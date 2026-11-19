@@ -24,7 +24,7 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20  # AI 時段要抓內文、寫報告，約多 3–6 分鐘
     env:
       REMOTE: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
     steps:
@@ -51,6 +51,8 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           AI_PROVIDER: ${{ vars.AI_PROVIDER }}
           AI_MODEL: ${{ vars.AI_MODEL }}
+          AI_MODEL_WRITER: ${{ vars.AI_MODEL_WRITER }}
+          AI_DEEP: ${{ vars.AI_DEEP }}
           AI_HOURS: ${{ vars.AI_HOURS }}
         run: |
           python pipeline/run.py ${{ inputs.force_ai && '--force-ai' || '' }}

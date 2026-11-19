@@ -499,6 +499,9 @@ def carry_ai(out, prev):
     if brief:
         items = [{**it, "id": old_new.get(it.get("id"))} for it in brief.get("items", [])]
         out["ai_brief"] = {**brief, "items": items}
+    rep = prev.get("ai_report")
+    if rep:  # 報告段落連到的議題編號也要換成新的；對不到就不連結
+        out["ai_report"] = {**rep, "sections": [{**sec, "topic": old_new.get(sec.get("topic"))} for sec in rep.get("sections", [])]}
 
 
 def write_index():
