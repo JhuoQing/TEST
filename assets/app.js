@@ -6,7 +6,8 @@
   var LEAN = { green: '綠', blue: '藍', neutral: '中', unknown: '' };
   var STATUS = { '新議題': '🆕 新議題', '升溫': '📈 升溫', '降溫': '📉 降溫', '延燒': '🔁 延燒' };
   var LEVEL = { high: '🚨 高度留意', mid: '⚠️ 留意', low: '👀 參考' };
-  var state = { dates: [], date: null, day: null, cache: {}, showAll: false };
+  var VIEWS = ['home', 'topics', 'signals', 'media', 'about'];
+  var state = { dates: [], date: null, day: null, cache: {}, view: 'home', autoOpened: false, health: null };
   var app = document.getElementById('app');
 
   function h(tag, attrs) {
@@ -86,7 +87,7 @@
     b.items.forEach(function (it, i) {
       var t = it.id ? d.topics.filter(function (k) { return k.id === it.id; })[0] : null;
       var body = h('div', null, h('b', { text: (t && title(t)) || it.title }), h('p', { text: it.text }));
-      var row = t ? h('button', { type: 'button', on: { click: function () { openTopic(t); } } }, h('span', { class: 'n', text: String(i + 1) }), body)
+      var row = t ? h('button', { type: 'button', on: { click: function () { closeReport(); openTopic(t); } } }, h('span', { class: 'n', text: String(i + 1) }), body)
                   : h('div', { class: 'row' }, h('span', { class: 'n', text: String(i + 1) }), body);
       ol.appendChild(h('li', null, row));
     });
@@ -108,16 +109,14 @@
     return span;
   }
 
-  function reportBox(d) {
+  function reportContent(d) {
     var rep = d.ai_report;
     if (!rep || !rep.sections || !rep.sections.length) return null;
-    var el = h('section', { class: 'report' },
-      h('div', { class: 'brief-head' }, h('h2', { text: '一分鐘看懂今天' }),
-        h('span', { text: '約 ' + rep.seconds + ' 秒讀完・讀了 ' + rep.refs.length + ' 篇報導內文' })));
+    var el = h('div', { class: 'report' }, h('p', { class: 'report-date', text: d.date.replace(/-/g, '/') + '・依 ' + rep.refs.length + ' 篇報導內文整理' }));
     if (rep.lead) el.appendChild(h('p', { class: 'report-lead' }, rep.lead.text, cites(rep, rep.lead.cite)));
     rep.sections.forEach(function (sec, i) {
       var t = sec.topic ? d.topics.filter(function (k) { return k.id === sec.topic; })[0] : null;
-      var head = t ? h('button', { type: 'button', class: 'rhead', on: { click: function () { openTopic(t); } } }, h('span', { class: 'n', text: String(i + 1) }), sec.heading, h('small', { text: '看標題 ›' }))
+      var head = t ? h('button', { type: 'button', class: 'rhead', on: { click: function () { closeReport(); openTopic(t); } } }, h('span', { class: 'n', text: String(i + 1) }), sec.heading, h('small', { text: '看標題 ›' }))
                    : h('div', { class: 'rhead' }, h('span', { class: 'n', text: String(i + 1) }), sec.heading);
       var p = h('p', { class: 'rbody' });
       sec.sentences.forEach(function (x) { p.appendChild(document.createTextNode(x.text)); p.appendChild(cites(rep, x.cite)); });
@@ -147,6 +146,32 @@
     el.appendChild(h('p', { class: 'ai-tag', text: '🤖 AI 依新聞內文撰寫・每句都對照引用原文查核（' + (v.kept || 0) + '/' + (v.checked || 0) + ' 句通過）・'
       + (rep.at ? rep.at.slice(11, 16) + ' 更新・' : '') + '數字為引用編號，點擊開啟原文' }));
     return el;
+  }
+
+  /* 彈出視窗內容：有一分鐘報告就用報告，沒有就退回只看標題的 60 秒導讀 */
+  function modalContent(d) {
+    var rep = reportContent(d);
+    if (rep) return rep;
+    var b = briefing(d);
+    if (b) b.classList.add('in-modal');
+    return b;
+  }
+  function openReport() {
+    var el = modalContent(state.day);
+    if (!el) return;
+    var box = document.getElementById('report-content');
+    box.textContent = '';
+    box.appendChild(el);
+    var m = document.getElementById('report');
+    m.hidden = false;
+    box.scrollTop = 0;
+    m.querySelector('.close').focus();
+    document.body.style.overflow = 'hidden';
+  }
+  function closeReport() {
+    document.getElementById('report').hidden = true;
+    if (document.getElementById('sheet').hidden) document.body.style.overflow = '';
+    document.getElementById('open-report').focus();
   }
 
   /* 同一件事，幾種說法：AI 把標題歸成 2–3 種切角，每種附原始標題當證據 */
@@ -190,7 +215,7 @@
   function mainTopics(d) { return d.topics.filter(function (t) { return !isMixed(t); }); }
 
   function topCards(d) {
-    var el = block('前五大主題', '今天最多媒體在報的五件事。每則下方列出角度不同的代表標題，點「看詳細」可看全部標題與趨勢。');
+    var el = block('前五大主題', '今天最多媒體在報的五件事。點「看詳細」看全部標題與趨勢；其餘議題在「議題」分頁。');
     var wrap = h('div', { class: 'cards' });
     mainTopics(d).slice(0, 5).forEach(function (t, i) {
       var chips = h('div', { class: 'chips' });
@@ -232,24 +257,18 @@
     return el;
   }
 
-  function others(d) {
-    var top = mainTopics(d).slice(0, 5);
-    var rest = d.topics.filter(function (t) { return top.indexOf(t) < 0; });
-    if (!rest.length) return null;
-    var el = block('其他熱門議題', '前五大以外的議題。條越長代表熱度越高；標「綜合」的是多則不相干新聞被歸在一起。');
+  function ranking(d) {
+    var el = block('全部議題排行', '依熱度排序。條越長代表熱度越高；標「綜合」的是多則不相干新聞被歸在一起。點任一列看標題與趨勢。');
     var list = h('ol', { class: 'rank' });
-    (state.showAll ? rest : rest.slice(0, 10)).forEach(function (t) {
+    d.topics.forEach(function (t) {
       list.appendChild(h('li', null, h('button', { type: 'button', on: { click: function () { openTopic(t); } } },
         h('span', { class: 'no', text: String(t.rank) }),
-        h('span', { class: 'name' }, title(t), isMixed(t) ? h('span', { class: 'chip', style: 'margin-left:6px', text: '綜合' }) : null),
+        h('span', { class: 'name' }, title(t), isMixed(t) ? h('span', { class: 'chip', style: 'margin-left:6px', text: '綜合' }) : null,
+          STATUS[t.status] ? h('span', { class: 'chip', style: 'margin-left:6px', text: STATUS[t.status] }) : null),
         h('span', { class: 'meta', text: t.size + ' 則・' + t.n_sources + ' 家' }),
         setWidth(h('span', { class: 'bar' }), t.heat))));
     });
     el.appendChild(list);
-    if (rest.length > 10) {
-      el.appendChild(h('button', { class: 'btn ghost wide', type: 'button', text: state.showAll ? '只看前 10 個' : '顯示全部 ' + rest.length + ' 個',
-        on: { click: function () { state.showAll = !state.showAll; render(); } } }));
-    }
     return el;
   }
 
@@ -296,25 +315,62 @@
     return el;
   }
 
-  function similarity(d) {
-    var sim = d.similarity;
-    if (!sim || sim.ids.length < 3) return null;
-    var det = h('details', { class: 'more' }, h('summary', { text: '進階：誰跟誰的議程最同步' }));
-    var inner = h('div', { class: 'inner' },
-      h('p', { class: 'sub', text: '兩家媒體在各議題的版面分配越接近，數字越高（1.00 = 完全一樣）。單日參考價值有限，累積數週後更有意義。' }));
-    var head = h('tr', null, h('th', { text: '' }));
-    sim.ids.forEach(function (id) { head.appendChild(h('th', { scope: 'col', text: srcName(id) })); });
-    var body = h('tbody');
-    sim.matrix.forEach(function (row, i) {
-      var tr = h('tr', null, h('th', { scope: 'row', text: srcName(sim.ids[i]) }));
-      row.forEach(function (v, j) {
-        tr.appendChild(i === j ? h('td', { class: 'zero', text: '—' }) : cell(v, 1, v.toFixed(2), srcName(sim.ids[i]) + ' × ' + srcName(sim.ids[j]) + '：' + v.toFixed(2)));
+  /* 媒體風格指標：只看標題、不靠 AI。切換指標後以長條比較各家 */
+  var METRICS = [
+    { k: 'hot', name: '跟熱門程度', fmt: 'pct', desc: '自家標題有多少比例在報今天前 10 大議題。高＝跟著大家報；低＝走自己的議程或冷處理熱門事件。' },
+    { k: 'first', name: '搶先報', fmt: 'n', desc: '前 10 大議題中，有幾個是由這家最先發出標題。代表議題設定力，也可能是獨家或放話的起點。' },
+    { k: 'sens', name: '聳動用語', fmt: 'pct', desc: '標題含驚嘆號或「怒批、傻眼、打臉」等情緒性字眼的比例。越高代表越偏向用情緒吸引點擊。' },
+    { k: 'anon', name: '匿名消息', fmt: 'pct', desc: '標題含「知情人士、據傳、網傳」等不具名來源用語的比例。不代表內容不實，但較難查證。' }
+  ];
+  function mediaMetrics(d) {
+    var list = (d.media || []).filter(function (m) { return m.count >= 5; });
+    if (!list.length) return null;
+    var el = block('媒體風格指標', '同一天、同樣的新聞，各家怎麼處理。只計算今日標題 5 則以上的媒體。');
+    var t = d.totals;
+    var kpi = h('div', { class: 'stats' });
+    function st(v, label) { kpi.appendChild(h('div', { class: 'stat' }, h('b', { text: v }), h('span', { text: label }))); }
+    st(t.follow_median == null ? '—' : (t.follow_median >= 60 ? (t.follow_median / 60).toFixed(1) + ' 小時' : t.follow_median + ' 分'), '熱門議題擴散到第 3 家媒體（中位數）');
+    if (t.sensational_share != null) st(pct(t.sensational_share, 0), '標題帶情緒性用語');
+    st(pct(t.top3_share, 0), '版面集中在前三大議題');
+    st(String(list.length), '家媒體納入比較');
+    el.appendChild(kpi);
+    var seg = h('div', { class: 'seg', role: 'tablist' }), desc = h('p', { class: 'sub' }), bars = h('div', { class: 'srcbars' });
+    function show(m) {
+      Array.prototype.forEach.call(seg.children, function (b) { b.setAttribute('aria-selected', String(b.dataset.k === m.k)); });
+      desc.textContent = m.desc;
+      bars.textContent = '';
+      var rows = list.slice().sort(function (a, b) { return b[m.k] - a[m.k]; });
+      var top = rows[0][m.k] || 1;
+      rows.forEach(function (r) {
+        var x = d.sources.filter(function (z) { return z.id === r.id; })[0] || {};
+        bars.appendChild(h('span', { text: srcName(r.id) + (LEAN[x.lean] ? '（' + LEAN[x.lean] + '）' : '') }));
+        bars.appendChild(h('span', null, setWidth(h('span', { class: 'b', style: 'display:block' }), 100 * r[m.k] / top)));
+        bars.appendChild(h('span', { class: 'n', text: m.fmt === 'pct' ? pct(r[m.k], 0) : r[m.k] + ' 個' }));
       });
-      body.appendChild(tr);
+      state.metric = m.k;
+    }
+    METRICS.forEach(function (m) {
+      seg.appendChild(h('button', { type: 'button', role: 'tab', 'data-k': m.k, text: m.name, on: { click: function () { show(m); } } }));
     });
-    inner.appendChild(h('div', { class: 'scroll' }, h('table', { class: 'heat' }, h('thead', null, head), body)));
-    det.appendChild(inner);
-    return det;
+    el.appendChild(seg); el.appendChild(desc); el.appendChild(h('div', { class: 'chart pad' }, bars));
+    show(METRICS.filter(function (m) { return m.k === state.metric; })[0] || METRICS[0]);
+    return el;
+  }
+
+  function about(d) {
+    var el = block('怎麼算的', null);
+    [['資料', '每小時抓取 ' + d.sources.length + ' 家國內媒體的 RSS 與 Google News 標題，只收當天（台北時間）的新聞。'],
+     ['議題與熱度', '相似標題自動歸為同一議題；熱度＝報導則數 ×（1＋ln 報導媒體數），以當日最高者為 100。'],
+     ['異常訊號', '訊號只代表報導分布或用語「不尋常」，不等於有人刻意放話；突發事件、獨家採訪、媒體專長領域都會造成同樣的形狀。請點進議題看原始標題再判斷。'],
+     ['媒體風格指標', '只看標題計算，不靠 AI。立場標記（綠／藍／中）是一般外界認知，僅供對照。'],
+     ['一分鐘看懂今天', '每天 8、13、21 點，AI 讀熱門事件中不同媒體的新聞內文後撰寫。每句附引用並逐句對照原文查核，沒依據的句子會刪除並公開紀錄。內文不存檔、不轉載，只連回原文。']
+    ].forEach(function (x) { el.appendChild(h('div', { class: 'note' }, h('b', { text: x[0] }), x[1])); });
+    if (state.health) {
+      var hl = state.health, bad = hl.sources.filter(function (x) { return !x.ok; }).map(function (x) { return x.name; });
+      el.appendChild(h('div', { class: 'note' }, h('b', { text: '來源狀態' }), hl.checked_at.replace('T', ' ').slice(0, 16) + ' 檢查：' +
+        (hl.sources.length - bad.length) + '/' + hl.sources.length + ' 家正常' + (bad.length ? '；無資料：' + bad.join('、') : '') + '。'));
+    }
+    return el;
   }
 
   /* ---------- 議題明細 ---------- */
@@ -420,14 +476,32 @@
     app.textContent = '';
     document.getElementById('demo').hidden = d.mode !== 'demo';
     document.getElementById('updated').textContent = '資料更新：' + d.updated_at.replace('T', ' ').slice(0, 16) + '（台北時間）';
-    if (!d.topics.length) { app.appendChild(h('p', { class: 'empty', text: '這一天的標題還不夠多，無法歸納議題。' })); return; }
-    app.appendChild(stats(d));
-    var br = reportBox(d) || briefing(d); if (br) app.appendChild(br);  // 有一分鐘報告就取代 60 秒導讀
-    [topCards, signals, others, coverage, keywords, similarity].forEach(function (f) { var el = f(d); if (el) app.appendChild(el); });
+    document.getElementById('open-report').hidden = !(d.ai_report || d.ai_brief);
+    Array.prototype.forEach.call(document.querySelectorAll('#tabs a'), function (a) {
+      if (a.dataset.view === state.view) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    });
+    if (!d.topics.length && state.view !== 'about') { app.appendChild(h('p', { class: 'empty', text: '這一天的標題還不夠多，無法歸納議題。' })); return; }
+    var parts = {
+      home: [stats, topCards, keywords],
+      topics: [ranking],
+      signals: [signals],
+      media: [mediaMetrics, coverage],
+      about: [about]
+    }[state.view];
+    parts.forEach(function (f) { var el = f(d); if (el) app.appendChild(el); });
+    if (!state.autoOpened) { state.autoOpened = true; openReport(); }  // 進站時自動彈出一次
   }
 
+  function route() {
+    var v = (location.hash || '').slice(1);
+    state.view = VIEWS.indexOf(v) >= 0 ? v : 'home';
+    if (state.day) { render(); window.scrollTo(0, 0); }
+  }
+  window.addEventListener('hashchange', route);
+  route();
+
   function go(date) {
-    state.date = date; state.showAll = false;
+    state.date = date;
     var i = state.dates.indexOf(date);
     document.getElementById('date').value = date;
     document.getElementById('prev').disabled = i <= 0;
@@ -440,7 +514,12 @@
   document.getElementById('next').addEventListener('click', function () { go(state.dates[state.dates.indexOf(state.date) + 1]); });
   document.getElementById('date').addEventListener('change', function (e) { go(e.target.value); });
   document.getElementById('sheet').addEventListener('click', function (e) { if (e.target.hasAttribute('data-close')) closeSheet(); });
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeSheet(); });
+  document.getElementById('report').addEventListener('click', function (e) { if (e.target.hasAttribute('data-close-report')) closeReport(); });
+  document.getElementById('open-report').addEventListener('click', openReport);
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    if (!document.getElementById('sheet').hidden) closeSheet(); else if (!document.getElementById('report').hidden) closeReport();
+  });
 
   loadIndex().then(function (idx) {
     state.dates = idx.dates || [];
@@ -451,10 +530,6 @@
   }).catch(function (e) { app.textContent = ''; app.appendChild(h('p', { class: 'empty', text: '讀取資料索引失敗：' + e.message })); });
 
   if (!window.__BUNDLE__) {
-    getJSON('data/health.json').then(function (hl) {
-      var bad = hl.sources.filter(function (x) { return !x.ok; }).map(function (x) { return x.name; });
-      document.getElementById('health').textContent = '來源狀態（' + hl.checked_at.replace('T', ' ').slice(0, 16) + '）：' +
-        (hl.sources.length - bad.length) + '/' + hl.sources.length + ' 家正常' + (bad.length ? '；無資料：' + bad.join('、') : '') + '。';
-    }).catch(function () {});
+    getJSON('data/health.json').then(function (hl) { state.health = hl; if (state.view === 'about' && state.day) render(); }).catch(function () {});
   }
 })();

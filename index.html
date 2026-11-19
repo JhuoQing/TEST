@@ -2,40 +2,54 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- 只允許載入本站自己的程式與資料；即使有惡意標題混進來，也無法執行外部腳本或把資料送出去 -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <title>台灣輿情觀測｜今天台灣在吵什麼？</title>
-<meta name="description" content="每天彙整國內各大媒體新聞標題，分析今日討論熱度、各媒體著重議題與報導分布異常訊號。">
+<meta name="description" content="每天彙整國內各大媒體新聞，分析今日討論熱度、各媒體著重議題與報導分布異常訊號。">
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
 <div class="viz-root">
   <header class="top">
     <div class="brand">
-      <p class="eyebrow">每日新聞標題雷達</p>
+      <p class="eyebrow">每日新聞雷達</p>
       <h1>今天台灣<mark>在吵什麼</mark>？</h1>
     </div>
-    <div class="datebar">
-      <button id="prev" type="button" aria-label="前一天">‹</button>
-      <select id="date" aria-label="選擇日期"></select>
-      <button id="next" type="button" aria-label="後一天">›</button>
+    <div class="tools">
+      <button id="open-report" class="report-btn" type="button" hidden>📰 一分鐘看懂今天</button>
+      <div class="datebar">
+        <button id="prev" type="button" aria-label="前一天">‹</button>
+        <select id="date" aria-label="選擇日期"></select>
+        <button id="next" type="button" aria-label="後一天">›</button>
+      </div>
     </div>
     <p class="updated" id="updated"></p>
   </header>
+
+  <nav class="tabs" id="tabs" aria-label="頁面">
+    <a href="#home" data-view="home"><span>🔥</span>總覽</a>
+    <a href="#topics" data-view="topics"><span>📋</span>議題</a>
+    <a href="#signals" data-view="signals"><span>👀</span>訊號</a>
+    <a href="#media" data-view="media"><span>📺</span>媒體</a>
+    <a href="#about" data-view="about"><span>ℹ️</span>說明</a>
+  </nav>
 
   <div id="demo" class="banner" hidden>
     <strong>示範資料</strong>　目前顯示的媒體與標題皆為虛構，用來預覽版面。
   </div>
 
   <main id="app" aria-live="polite"><p class="loading">載入中…</p></main>
+</div>
 
-  <footer class="foot">
-    <p><strong>怎麼算的</strong>　只分析新聞標題。相似標題自動歸為同一議題；熱度＝報導則數 ×（1＋ln 報導媒體數），以當日最高者為 100。</p>
-    <p><strong>怎麼讀訊號</strong>　訊號只代表報導分布或用語「不尋常」，不等於有人刻意放話；突發事件、獨家採訪、媒體專長領域都會造成同樣的形狀。請點進議題看原始標題再判斷。</p>
-    <p id="health"></p>
-  </footer>
+<!-- 一分鐘看懂今天：進站自動彈出，右上角關閉；之後可從頁首按鈕再打開 -->
+<div id="report" class="modal" hidden>
+  <div class="sheet-bg" data-close-report></div>
+  <section class="modal-body" role="dialog" aria-modal="true" aria-labelledby="report-title">
+    <div class="sheet-bar"><span id="report-title">📰 一分鐘看懂今天</span><button class="close" type="button" data-close-report aria-label="關閉">✕</button></div>
+    <div class="sheet-scroll" id="report-content"></div>
+  </section>
 </div>
 
 <div id="sheet" class="sheet" hidden>
