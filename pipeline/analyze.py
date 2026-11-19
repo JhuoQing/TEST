@@ -331,6 +331,45 @@ def find_signals(idx, items, src_meta, base_share, lean_base):
     return sig
 
 
+SENS = re.compile(r"[！!]|驚爆|怒批|痛批|痛轟|怒轟|狂酸|開嗆|嗆爆|傻眼|吵翻|炸鍋|打臉|超扯|竟然|嚇呆|嚇壞|震撼|崩潰|暴怒|看傻|慘了|氣炸|轟動|瘋傳|全網|網炸")
+HOT_N = 10          # 「熱門議題」指前幾大
+FOLLOW_SOURCES = 3  # 第幾家媒體跟進才算「擴散」
+
+
+def media_metrics(scored, items, src_count):
+    """各媒體的報導風格指標（只看標題，不靠 AI）：
+    hot   跟熱門程度：自家標題有多少比例在報前 10 大議題（低＝走自己的議程）
+    first 搶先報：前 10 大議題中，有幾個是由這家最先發出標題
+    sens  聳動用語：標題含驚嘆號或情緒性字眼的比例
+    anon  匿名消息：標題含「知情人士」「據傳」等不具名來源用語的比例
+    另回傳前 10 大議題的「擴散速度」中位數：從第一則到第 3 家媒體跟進的分鐘數。"""
+    hot_idx, first, gaps = set(), Counter(), []
+    for _, g in scored[:HOT_N]:
+        hot_idx.update(g)
+        order = sorted(g, key=lambda i: items[i]["time"])
+        first[items[order[0]]["source"]] += 1
+        seen, t0 = set(), parse_t(items[order[0]]["time"])
+        for i in order:
+            seen.add(items[i]["source"])
+            if len(seen) >= FOLLOW_SOURCES:
+                gaps.append(round((parse_t(items[i]["time"]) - t0).total_seconds() / 60))
+                break
+    per = defaultdict(lambda: {"hot": 0, "sens": 0, "anon": 0})
+    for i, it in enumerate(items):
+        m = per[it["source"]]
+        m["hot"] += i in hot_idx
+        m["sens"] += bool(SENS.search(it["title"]))
+        m["anon"] += bool(ANON.search(it["title"]))
+    out = []
+    for s, c in src_count.most_common():
+        m = per[s]
+        out.append({"id": s, "count": c, "hot": round(m["hot"] / c, 3), "first": first.get(s, 0),
+                    "sens": round(m["sens"] / c, 3), "anon": round(m["anon"] / c, 3)})
+    gaps.sort()
+    follow = gaps[len(gaps) // 2] if gaps else None
+    return out, follow
+
+
 def load_history(date, days=6):
     out = []
     d0 = datetime.strptime(date, "%Y-%m-%d")
@@ -440,17 +479,7 @@ def analyze(date):
         for k in kws:
             kw_total[k] += kw_df[k]
 
-    # 媒體議程相似度：各媒體在前幾大議題上的版面分配有多像
-    ids = [s for s, c in src_count.most_common() if c >= 15]
-    mat = []
-    tv = {s: [t["by_source"].get(s, 0) / src_count[s] for t in topics] for s in ids}
-    for a in ids:
-        row = []
-        for b in ids:
-            na = math.sqrt(sum(x * x for x in tv[a])); nb = math.sqrt(sum(x * x for x in tv[b]))
-            row.append(round(sum(x * y for x, y in zip(tv[a], tv[b])) / (na * nb), 2) if na and nb else 0)
-        mat.append(row)
-
+    metrics, follow = media_metrics(scored, items, src_count)
     level_rank = {"high": 0, "mid": 1, "low": 2}
     all_signals.sort(key=lambda s: (level_rank[s["level"]], int(s["topic"][1:])))
     in_topics = sum(t["size"] for t in topics)
@@ -459,12 +488,13 @@ def analyze(date):
         "mode": "demo" if raw.get("demo") else "live",
         "totals": {"headlines": n, "sources": len(src_count), "topics": len(topics),
                    "top3_share": round(sum(t["size"] for t in topics[:3]) / n, 4),
-                   "in_topics_share": round(in_topics / n, 4)},
+                   "in_topics_share": round(in_topics / n, 4), "follow_median": follow,
+                   "sensational_share": round(sum(1 for it in items if SENS.search(it["title"])) / n, 4)},
         "sources": [{"id": s, "name": src_meta[s]["name"], "lean": src_meta[s].get("lean", "unknown"),
                      "kind": src_meta[s].get("kind", ""), "count": c} for s, c in src_count.most_common()],
         "topics": topics, "signals": all_signals,
         "keywords": [{"text": k, "n": c} for k, c in kw_total.most_common(40)],
-        "similarity": {"ids": ids, "matrix": mat},
+        "media": metrics,
     }
 
     out_dir = DATA / "daily"
