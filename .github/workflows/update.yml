@@ -10,6 +10,10 @@ on:
         description: "這次強制執行 AI 註解"
         type: boolean
         default: false
+      fresh:
+        description: "忽略快取，即使內容沒變也重跑 AI（會多花 token）"
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths: ["index.html", "assets/**", "pipeline/**", ".github/workflows/update.yml"]
@@ -53,9 +57,10 @@ jobs:
           AI_MODEL: ${{ vars.AI_MODEL }}
           AI_MODEL_WRITER: ${{ vars.AI_MODEL_WRITER }}
           AI_DEEP: ${{ vars.AI_DEEP }}
+          AI_TRIGGER: ${{ github.event_name }}  # push 只部署、不呼叫 AI
           AI_HOURS: ${{ vars.AI_HOURS }}
         run: |
-          python pipeline/run.py ${{ inputs.force_ai && '--force-ai' || '' }}
+          python pipeline/run.py ${{ inputs.force_ai && '--force-ai' || '' }} ${{ inputs.fresh && '--fresh' || '' }}
 
       - name: Build site
         run: |

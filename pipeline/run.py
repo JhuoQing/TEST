@@ -23,5 +23,5 @@ if __name__ == "__main__":
     date = fetch.fetch_all()
     (analyze.DATA / "daily").mkdir(parents=True, exist_ok=True)
     if analyze.analyze(date):
-        ai_enrich.enrich(date, force="--force-ai" in sys.argv)
+        ai_enrich.enrich(date, force="--force-ai" in sys.argv, fresh="--fresh" in sys.argv)
     analyze.write_index()  # 即使今天還沒資料也要有索引檔，部署才不會失敗
