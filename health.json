@@ -1,0 +1,117 @@
+{
+ "checked_at": "2026-11-21T19:38:10+08:00",
+ "sources": [
+  {
+   "id": "cna",
+   "name": "中央社",
+   "ok": true,
+   "fetched": 120,
+   "added": 77,
+   "errors": []
+  },
+  {
+   "id": "pts",
+   "name": "公視新聞",
+   "ok": true,
+   "fetched": 25,
+   "added": 21,
+   "errors": []
+  },
+  {
+   "id": "ltn",
+   "name": "自由時報",
+   "ok": true,
+   "fetched": 80,
+   "added": 65,
+   "errors": []
+  },
+  {
+   "id": "udn",
+   "name": "聯合新聞網",
+   "ok": true,
+   "fetched": 100,
+   "added": 90,
+   "errors": []
+  },
+  {
+   "id": "chinatimes",
+   "name": "中時新聞網",
+   "ok": true,
+   "fetched": 100,
+   "added": 78,
+   "errors": []
+  },
+  {
+   "id": "ettoday",
+   "name": "ETtoday",
+   "ok": true,
+   "fetched": 50,
+   "added": 50,
+   "errors": []
+  },
+  {
+   "id": "setn",
+   "name": "三立新聞網",
+   "ok": true,
+   "fetched": 100,
+   "added": 57,
+   "errors": []
+  },
+  {
+   "id": "ftv",
+   "name": "民視新聞",
+   "ok": true,
+   "fetched": 100,
+   "added": 65,
+   "errors": []
+  },
+  {
+   "id": "tvbs",
+   "name": "TVBS",
+   "ok": true,
+   "fetched": 100,
+   "added": 66,
+   "errors": []
+  },
+  {
+   "id": "ebc",
+   "name": "東森新聞",
+   "ok": true,
+   "fetched": 100,
+   "added": 62,
+   "errors": []
+  },
+  {
+   "id": "newtalk",
+   "name": "新頭殼",
+   "ok": true,
+   "fetched": 100,
+   "added": 58,
+   "errors": []
+  },
+  {
+   "id": "storm",
+   "name": "風傳媒",
+   "ok": true,
+   "fetched": 100,
+   "added": 80,
+   "errors": []
+  },
+  {
+   "id": "mirror",
+   "name": "鏡週刊",
+   "ok": true,
+   "fetched": 100,
+   "added": 98,
+   "errors": []
+  },
+  {
+   "id": "nownews",
+   "name": "NOWnews",
+   "ok": true,
+   "fetched": 100,
+   "added": 56,
+   "errors": []
+  }
+ ]
+}
